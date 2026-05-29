@@ -39,6 +39,20 @@ spec:
               value: "6379"
             - name: CACHE_TTL_S
               value: "60"
+            - name: DB_HOST
+              value: db.order-demo.svc.cluster.local
+            - name: DB_PORT
+              value: "5432"
+            - name: DB_USER
+              value: inventory
+            - name: DB_PASSWORD
+              value: inventory
+            - name: DB_NAME
+              value: inventory
+            - name: DB_POOL_MAX
+              value: "2"
+            - name: DB_TIMEOUT_MS
+              value: "2000"
           readinessProbe:
             httpGet:
               path: /health
