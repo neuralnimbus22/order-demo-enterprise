@@ -33,6 +33,12 @@ spec:
               value: payment-confirmed
             - name: KAFKA_GROUP_ID
               value: inventory-service
+            - name: REDIS_HOST
+              value: redis.order-demo.svc.cluster.local
+            - name: REDIS_PORT
+              value: "6379"
+            - name: CACHE_TTL_S
+              value: "60"
           readinessProbe:
             httpGet:
               path: /health
