@@ -1,49 +1,46 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: inventory
+  name: payment
   namespace: order-demo
   labels:
-    app: inventory
+    app: payment
 spec:
   replicas: 1
   selector:
     matchLabels:
-      app: inventory
+      app: payment
   template:
     metadata:
       labels:
-        app: inventory
+        app: payment
     spec:
+      terminationGracePeriodSeconds: 5
       containers:
-        - name: inventory
-          image: ghcr.io/neuralnimbus22/order-demo-inventory:latest
+        - name: payment
+          image: ghcr.io/neuralnimbus22/order-demo-payment:latest
           imagePullPolicy: IfNotPresent
           ports:
             - name: http
-              containerPort: 3003
+              containerPort: 3004
           env:
             - name: PORT
-              value: "3003"
+              value: "3004"
             - name: KAFKA_BROKERS
               value: kafka.order-demo.svc.cluster.local:9092
             - name: KAFKA_TOPIC
-              value: order-placed
-            - name: KAFKA_PAYMENT_TOPIC
               value: payment-confirmed
-            - name: KAFKA_GROUP_ID
-              value: inventory-service
           readinessProbe:
             httpGet:
               path: /health
-              port: 3003
+              port: 3004
             initialDelaySeconds: 2
             periodSeconds: 3
             failureThreshold: 6
           livenessProbe:
             httpGet:
               path: /health
-              port: 3003
+              port: 3004
             initialDelaySeconds: 10
             periodSeconds: 15
             failureThreshold: 3
@@ -51,15 +48,15 @@ spec:
 apiVersion: v1
 kind: Service
 metadata:
-  name: inventory
+  name: payment
   namespace: order-demo
   labels:
-    app: inventory
+    app: payment
 spec:
   type: ClusterIP
   selector:
-    app: inventory
+    app: payment
   ports:
     - name: http
-      port: 3003
-      targetPort: 3003
+      port: 3004
+      targetPort: 3004
