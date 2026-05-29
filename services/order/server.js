@@ -15,6 +15,7 @@ const { Kafka, logLevel } = require('kafkajs');
 
 const PORT          = parseInt(process.env.PORT || '3002', 10);
 const AUTH_URL      = process.env.AUTH_URL      || 'http://localhost:3001';
+const AUTH_TOKEN    = process.env.AUTH_TOKEN    || 'demo-token-good';
 const KAFKA_BROKERS = (process.env.KAFKA_BROKERS || 'localhost:9092').split(',');
 const KAFKA_TOPIC   = process.env.KAFKA_TOPIC   || 'order-placed';
 
@@ -50,8 +51,12 @@ app.post('/orders', async (req, res) => {
   try {
     authResp = await fetch(`${AUTH_URL}/authorize`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ orderId: id }),
+      headers: {
+        'Content-Type': 'application/json',
+        // Send token as Bearer; auth-service also accepts {token} in body.
+        'Authorization': `Bearer ${AUTH_TOKEN}`,
+      },
+      body: JSON.stringify({ orderId: id, token: AUTH_TOKEN }),
       // Short timeout so a hung/down auth fails fast rather than tying up the
       // request for the default fetch timeout (which is effectively forever).
       signal: AbortSignal.timeout(2000),

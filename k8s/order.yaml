@@ -26,9 +26,11 @@ spec:
             - name: PORT
               value: "3002"
             - name: AUTH_URL
-              value: http://auth:3001
+              value: http://auth.order-demo.svc.cluster.local:3001
+            - name: AUTH_TOKEN
+              value: demo-token-good
             - name: KAFKA_BROKERS
-              value: kafka:9092
+              value: kafka.order-demo.svc.cluster.local:9092
             - name: KAFKA_TOPIC
               value: order-placed
           readinessProbe:
