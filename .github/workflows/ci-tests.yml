@@ -47,7 +47,7 @@ jobs:
       - uses: actions/checkout@v4
       - name: Install test deps
         run: pip3 install -r tests/inventory/requirements.txt
-    - name: Port-forward and run inventory tests
+      - name: Port-forward and run inventory tests
         run: |
           kubectl port-forward -n order-demo svc/inventory 3003:3003 &
           kubectl port-forward -n order-demo svc/order 3002:3002 &
