@@ -10,24 +10,22 @@ jobs:
       - uses: actions/checkout@v4
       - name: Install test deps
         run: pip3 install -r tests/auth/requirements.txt
-      - name: Port-forward auth service
+      - name: Port-forward and run auth tests
         run: |
           kubectl port-forward -n order-demo svc/auth 3001:3001 &
-          sleep 3
-      - name: Run auth tests
-        run: python3 -m pytest tests/auth/test_auth.py -v
+          sleep 5
+          python3 -m pytest tests/auth/test_auth.py -v
 
   order-tests:
     runs-on: self-hosted
     needs: auth-tests
     steps:
       - uses: actions/checkout@v4
-      - name: Port-forward order service
+      - name: Port-forward and run order tests
         run: |
           kubectl port-forward -n order-demo svc/order 3002:3002 &
-          sleep 3
-      - name: Run order tests
-        run: newman run tests/order/order.postman_collection.json
+          sleep 5
+          newman run tests/order/order.postman_collection.json
 
   payment-tests:
     runs-on: self-hosted
@@ -36,12 +34,11 @@ jobs:
       - uses: actions/checkout@v4
       - name: Install test deps
         run: pip3 install -r tests/payment/requirements.txt
-      - name: Port-forward payment service
+      - name: Port-forward and run payment tests
         run: |
           kubectl port-forward -n order-demo svc/payment 3004:3004 &
-          sleep 3
-      - name: Run payment tests
-        run: python3 -m pytest tests/payment/test_payment.py -v
+          sleep 5
+          python3 -m pytest tests/payment/test_payment.py -v
 
   inventory-tests:
     runs-on: self-hosted
@@ -50,9 +47,8 @@ jobs:
       - uses: actions/checkout@v4
       - name: Install test deps
         run: pip3 install -r tests/inventory/requirements.txt
-      - name: Port-forward inventory service
+      - name: Port-forward and run inventory tests
         run: |
           kubectl port-forward -n order-demo svc/inventory 3003:3003 &
-          sleep 3
-      - name: Run inventory tests
-        run: python3 -m pytest tests/inventory/ -v
+          sleep 5
+          python3 -m pytest tests/inventory/ -v
