@@ -1,0 +1,72 @@
+name: CI Tests
+on:
+  push:
+    branches: [main]
+
+jobs:
+  auth-tests:
+    runs-on: self-hosted
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install test deps
+        run: pip install -r tests/auth/requirements.txt
+      - name: Port-forward auth service
+        run: |
+          kubectl port-forward -n order-demo svc/auth 3001:3001 &
+          sleep 3
+      - name: Run auth tests
+        run: pytest tests/auth/test_auth.py -v
+
+  order-tests:
+    runs-on: self-hosted
+    needs: auth-tests
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: Install newman
+        run: npm install -g newman
+      - name: Port-forward order service
+        run: |
+          kubectl port-forward -n order-demo svc/order 3002:3002 &
+          sleep 3
+      - name: Run order tests
+        run: newman run tests/order/order.postman_collection.json
+
+  payment-tests:
+    runs-on: self-hosted
+    needs: order-tests
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install test deps
+        run: pip install -r tests/payment/requirements.txt
+      - name: Port-forward payment service
+        run: |
+          kubectl port-forward -n order-demo svc/payment 3004:3004 &
+          sleep 3
+      - name: Run payment tests
+        run: pytest tests/payment/test_payment.py -v
+
+  inventory-tests:
+    runs-on: self-hosted
+    needs: payment-tests
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install test deps
+        run: pip install -r tests/inventory/requirements.txt
+      - name: Port-forward inventory service
+        run: |
+          kubectl port-forward -n order-demo svc/inventory 3003:3003 &
+          sleep 3
+      - name: Run inventory tests
+        run: pytest tests/inventory/ -v
