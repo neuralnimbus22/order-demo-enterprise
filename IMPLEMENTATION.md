@@ -106,11 +106,26 @@ payment-service ── publishes ──► Kafka: payment-confirmed ─┘
 |---|---|
 | **bad token** | `kubectl -n order-demo set env deploy/order AUTH_TOKEN=invalid-token-xyz` then `kubectl -n order-demo rollout restart deploy/order`. Reset: set back to `demo-token-good` |
 
+### Resource limits
+
+`k8s/order.yaml` declares per-pod resource bounds so a Horizontal Pod Autoscaler can target the deployment:
+- **requests:** cpu `100m`, memory `64Mi`
+- **limits:**   cpu `250m`, memory `128Mi`
+
+These intentionally low ceilings are what make the k6 load test (below) reliably push order-service over its CPU target and trigger scaling.
+
 ### Test
 
 - **File:** `tests/order/order.postman_collection.json` (Postman v2.1 / Newman)
 - **Behavior:** generates fresh `orderId` per run; asserts `201` + `status:"placed"`. Note: collection itself does NOT send a token — order-service injects `AUTH_TOKEN` from its env on the server side.
 - **Run:** `npx --yes newman run tests/order/order.postman_collection.json --env-var baseUrl=http://localhost:3002`
+
+### Load test (k6)
+
+- **File:** `tests/load/order-load.js`
+- **Behavior:** ramps to **500 VUs** over 30s, holds for 2m, ramps down 30s. Each iteration POSTs `/orders` with a unique id then sleeps 100ms. Designed to push order-service CPU usage above the HPA target.
+- **SLO thresholds (built-in):** `http_req_duration p(95) < 800ms`, `http_req_failed rate < 0.05`.
+- **Run:** `ORDER_URL=http://localhost:3002 k6 run tests/load/order-load.js`
 
 ---
 
@@ -304,6 +319,25 @@ curl http://localhost:13003/fulfilled/${OID}
 
 ---
 
+## CI workflows
+
+Two GitHub Actions workflows live in `.github/workflows/`. Both target the live cluster via the self-hosted runner where applicable.
+
+### `build-images.yml` — multi-arch image builds → GHCR
+- **Triggers:** push to `main` (filtered to `services/**` or this workflow file) and tags matching `v*`.
+- **Permissions:** `contents: read`, `packages: write`.
+- **Strategy:** matrix over `[auth, order, payment, inventory]`, `fail-fast: false`, per-service GHA cache scope.
+- **Steps:** checkout → GHCR login (`github.actor` / `secrets.GITHUB_TOKEN`) → setup QEMU → setup Buildx → `docker/build-push-action` with `platforms: linux/amd64,linux/arm64`, `push: true`, tag `ghcr.io/neuralnimbus22/order-demo-<service>:latest`.
+- **Why multi-arch:** the same `:latest` tag must work on Apple Silicon developer machines (arm64) and on GKE / cloud nodes (amd64).
+
+### `ci-tests.yml` — sequential service tests
+- **Triggers:** push to `main`.
+- **Runner:** `self-hosted` (cluster-resident, so it can `kubectl port-forward` into `order-demo`).
+- **Job order:** `auth-tests` → `order-tests` → `payment-tests` → `inventory-tests`. Each job installs its deps if needed, port-forwards the service it targets (and any others it calls into), and runs the standalone test command.
+- **Note:** this is the in-repo CI — the broader TestKube orchestration that walks the dependency chain lives outside this repo.
+
+---
+
 ## Deviations from `order-demo-enterprise-build-spec.md`
 
 Things implemented differently from the spec, with the reason.
@@ -340,5 +374,5 @@ Endpoints: `POST /stock/seed`, `POST /cache/seed`, `POST /cache/flush`, `POST /d
 ### 9. The carried-over scripts (`scripts/deploy.sh`, `scripts/break-auth.sh`, etc.) were not updated for new services
 **Why:** out of scope for this build. They still work for the auth-only break/restore demo flow. A future "enterprise deploy.sh" that brings up payment + redis + db is straightforward but deferred.
 
-### 10. CLAUDE.md is stale
-**Why:** the in-tree `CLAUDE.md` still describes the pre-enterprise topology (three services, one topic). Updating it was not in the scope for today; this `IMPLEMENTATION.md` is the as-built source for now. A future task should rewrite CLAUDE.md to match.
+### 10. CLAUDE.md was stale at the time of the original four-phase build
+At the time of the as-built write, `CLAUDE.md` still described the pre-enterprise topology (three services, one topic). It has since been refreshed in a docs-only pass to match the 4-service reality (payment, `payment-confirmed`, Postgres, Redis, inventory's full convergence + cache/DB surface). `README.md` was refreshed in the same pass. `ARCHITECTURE.md` was already accurate and was not touched.
