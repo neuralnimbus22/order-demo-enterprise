@@ -23,7 +23,7 @@ payment-service ── publishes ──► Kafka: payment-confirmed ─┘    (c
 | Component | Role |
 |---|---|
 | **auth-service** | Authorizes orders. `order-service` calls it first. Deepest upstream. |
-| **order-service** | Calls `auth-service`, then — and only then — publishes `order-placed` to Kafka. |
+| **order-service** | Calls `auth-service`, then — and only then — publishes `order-placed` to Kafka. Autoscales under load via a HorizontalPodAutoscaler on CPU (min 1, max 5). |
 | **payment-service** | Confirms payment, then publishes `payment-confirmed` to Kafka. |
 | **inventory-service** | Needs BOTH `order-placed` AND `payment-confirmed` for an order id before fulfillment. Reads stock from Redis cache, backed by the database. Where end-to-end outcomes surface as observable symptoms. |
 | **Kafka** | Topics: `order-placed`, `payment-confirmed`. |

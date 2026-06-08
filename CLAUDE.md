@@ -35,6 +35,7 @@ payment-service ── publishes ──► Kafka: payment-confirmed ─┘    (c
 | `k8s/{auth,order,payment,inventory}.yaml` | Deployment + Service for each. Images `ghcr.io/neuralnimbus22/order-demo-{name}:latest` (public, multi-arch), `imagePullPolicy: IfNotPresent`. Auth has `terminationGracePeriodSeconds: 5`. order has CPU/memory `requests/limits` so an HPA can scale it. |
 | `k8s/redis.yaml` | `redis:7-alpine` — read-through cache for inventory stock lookups. Service `redis:6379`. |
 | `k8s/db.yaml` | `postgres:16-alpine` — source-of-truth for inventory's `stock` table. Service `db:5432`. Schema auto-applied by inventory on startup. |
+| `k8s/hpa.yaml` | HorizontalPodAutoscaler on `deploy/order`: min 1, max 5, target avg CPU 70%. Pairs with order's `resources` block and the k6 load test. **Requires metrics-server** — present on GKE, typically NOT on local Docker Desktop (the HPA object exists but metric reads `<unknown>` and no scaling happens). |
 | `tests/auth/test_auth.py` | pytest. Calls `/authorize` with/without tokens; asserts 200/401/403. |
 | `tests/order/order.postman_collection.json` | Newman. Real `POST /orders` asserting `201` + `status:"placed"`. order-service injects `AUTH_TOKEN` server-side from env — the collection itself sends no token. |
 | `tests/payment/test_payment.py` | pytest. Asserts `POST /payments` returns `201 confirmed`. |
@@ -43,7 +44,7 @@ payment-service ── publishes ──► Kafka: payment-confirmed ─┘    (c
 | `tests/load/order-load.js` | k6 load script. Ramps to 500 VUs against `POST /orders` to drive HPA scaling. SLOs: p95<800ms, failed<5%. |
 | `.github/workflows/build-images.yml` | Builds the four images multi-arch (linux/amd64 + linux/arm64) via QEMU+buildx, pushes to GHCR. Trigger filtered to `services/**` + this file. |
 | `.github/workflows/ci-tests.yml` | Runs the four service tests sequentially on the self-hosted runner against the live cluster. |
-| `scripts/deploy.sh` | **One-command bring-up.** namespace → Kafka + wait → pre-create `order-placed` → services + wait → rollout-restart order/inventory (Kafka client race) → sanity-check. Idempotent. |
+| `scripts/deploy.sh` | **One-command bring-up.** namespace → Kafka + wait → pre-create BOTH topics (`order-placed`, `payment-confirmed`) → services + infra (auth, order, payment, inventory, redis, db) + HPA → wait for every Deployment Available → rollout-restart the kafkajs clients (order, payment, inventory) → sanity-check. Idempotent. |
 | `scripts/break-auth.sh` | Scales auth → 0 and waits until cascade is observable (POST /orders returns 502). Typical 2–5s, capped by `WAIT_TIMEOUT_S=30`. |
 | `scripts/restore.sh` | Scales auth → 1, deletes + recreates topic, restarts inventory (wipes in-memory state), verifies with a real order, then resets topic + inventory ONCE MORE so HWM=0. |
 | `scripts/sanity-check.sh` | Per-deployment health + topic existence + topic high-water-mark. `[OK]/[WARN]/[FAIL]` markers. |
@@ -64,23 +65,20 @@ cd ../inventory       && docker build -t ghcr.io/neuralnimbus22/order-demo-inven
 ```bash
 ./scripts/deploy.sh
 ```
-What it does, in order: applies `k8s/namespace.yaml` → applies `kafka/` and waits for Kafka Available → pre-creates the `order-placed` topic → applies `k8s/` (auth + order + payment + inventory + redis + db) → waits for all Deployments Available → rollout-restarts order + inventory to clear the Kafka client race → runs `scripts/sanity-check.sh`. Idempotent.
-
-> **Note:** `scripts/deploy.sh` currently only pre-creates the `order-placed` topic. `payment-confirmed` auto-creates on first PRODUCE, but inventory subscribes to it at startup. If inventory ever logs `This server does not host this topic-partition` on the payment topic, pre-create it the same way: `kubectl -n order-demo exec deploy/kafka -- /opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --create --if-not-exists --topic payment-confirmed --partitions 1 --replication-factor 1`.
+What it does, in order: applies `k8s/namespace.yaml` → applies `kafka/` and waits for Kafka Available → pre-creates **both** topics (`order-placed` and `payment-confirmed`) → applies `k8s/` (auth + order + payment + inventory + redis + db + the HPA) → waits for every Deployment Available (`auth`, `order`, `payment`, `inventory`, `redis`, `db`) → rollout-restarts the kafkajs clients (`order`, `payment`, `inventory`) to clear the Kafka client race → runs `scripts/sanity-check.sh`. Idempotent.
 
 If you'd rather apply manually:
 ```bash
 kubectl apply -f k8s/namespace.yaml
 kubectl apply -f kafka/
 kubectl -n order-demo wait --for=condition=available --timeout=180s deploy/kafka
-kubectl -n order-demo exec deploy/kafka -- /opt/kafka/bin/kafka-topics.sh \
-  --bootstrap-server localhost:9092 --create --if-not-exists \
-  --topic order-placed --partitions 1 --replication-factor 1
-kubectl -n order-demo exec deploy/kafka -- /opt/kafka/bin/kafka-topics.sh \
-  --bootstrap-server localhost:9092 --create --if-not-exists \
-  --topic payment-confirmed --partitions 1 --replication-factor 1
+for t in order-placed payment-confirmed; do
+  kubectl -n order-demo exec deploy/kafka -- /opt/kafka/bin/kafka-topics.sh \
+    --bootstrap-server localhost:9092 --create --if-not-exists \
+    --topic "$t" --partitions 1 --replication-factor 1
+done
 kubectl apply -f k8s/
-kubectl -n order-demo rollout restart deploy/order deploy/inventory
+kubectl -n order-demo rollout restart deploy/order deploy/payment deploy/inventory
 ```
 
 **Sanity check:** `./scripts/sanity-check.sh` → expects all `[OK]`.
@@ -117,8 +115,8 @@ ORDER_URL=http://localhost:13002 k6 run tests/load/order-load.js
 - **`break-auth.sh` returns ONLY after cascade is observable** — `POST /orders → 502` is confirmed via probe. No race window for the next step.
 - **`restore.sh` resets all three state layers** — Kafka log (topic delete + recreate), consumer offset (inventory restart), in-memory state (inventory restart). Skipping any layer can cause false passes.
 - **Auth has a SIGTERM handler + `terminationGracePeriodSeconds: 5`** in `k8s/auth.yaml`. Without these, the default 30s grace period made the cascade take ~31s instead of ~2–5s.
-- **Kafka consumer + auto-create-topics interaction**: auto-create fires on PRODUCE, not SUBSCRIBE. If inventory starts before any message is published, its subscribe errors. Fix: pre-create the topic (the bring-up commands above do this for `order-placed`; do the same for `payment-confirmed` if you hit it).
-- **Kafka client retry window**: `kafkajs` retries a broker connect ~5 times (~15s total) and then **gives up permanently**, leaving the pod alive but disconnected. If order/inventory pods start before Kafka is reachable (e.g. all manifests applied in one shot), they end up "Ready but broken". Fix: rollout-restart order + inventory after Kafka is proven up. `scripts/deploy.sh` does this automatically — if you bring the stack up manually, do the restart yourself.
+- **Kafka consumer + auto-create-topics interaction**: auto-create fires on PRODUCE, not SUBSCRIBE. If inventory starts before any message is published, its subscribe errors. Fix: pre-create the topic. `scripts/deploy.sh` now pre-creates **both** topics (`order-placed` and `payment-confirmed`) so a fresh-cluster bring-up no longer races on either.
+- **Kafka client retry window**: `kafkajs` retries a broker connect ~5 times (~15s total) and then **gives up permanently**, leaving the pod alive but disconnected. Any service that hosts a kafkajs client — **order, payment, and inventory** — hits this if it starts before Kafka is reachable. Fix: rollout-restart all three after Kafka is proven up. `scripts/deploy.sh` does this automatically — if you bring the stack up manually, do the restart yourself.
 - **Inventory's `/health` is deliberately liveness-only** — it does NOT touch the DB. That's so DB DEGRADED (pool saturation) doesn't kill the readiness probe and turn a slow-DB symptom into a CrashLoop. Use `/db/health` to actually check DB reachability.
 - **DB pool is intentionally tiny** (`DB_POOL_MAX=2`) so `/db/exhaust` can reliably saturate it for the DB DEGRADED demo.
 - **DATA_INCONSISTENCY is a distinct signature** — all services `/health` 200, but `/fulfill` returns `409` with `cacheQty` and `dbQty` reported. Cache TTL is 60s, so the poison window is finite; re-seed via `/cache/seed` to extend.
