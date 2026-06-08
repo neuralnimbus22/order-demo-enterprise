@@ -18,13 +18,13 @@ const BASE = __ENV.ORDER_URL || 'http://localhost:3002';
 
 export const options = {
   stages: [
-    { duration: '1m', target: 50 },   // ramp up:   0 → 50 VUs
-    { duration: '3m', target: 50 },   // sustain:   50 VUs
-    { duration: '1m', target: 0  },   // ramp down: 50 → 0 VUs
+    { duration: '30s', target: 500 },
+    { duration: '2m', target: 500 },
+    { duration: '30s', target: 0 },
   ],
   thresholds: {
     http_req_duration: ['p(95)<800'],
-    http_req_failed:   ['rate<0.05'],
+    http_req_failed: ['rate<0.05'],
   },
 };
 
@@ -38,5 +38,5 @@ export default function () {
     headers: { 'Content-Type': 'application/json' },
   });
 
-  sleep(0.5);
+  sleep(0.1);
 }
