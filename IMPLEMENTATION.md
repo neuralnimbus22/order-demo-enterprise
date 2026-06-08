@@ -106,13 +106,20 @@ payment-service ── publishes ──► Kafka: payment-confirmed ─┘
 |---|---|
 | **bad token** | `kubectl -n order-demo set env deploy/order AUTH_TOKEN=invalid-token-xyz` then `kubectl -n order-demo rollout restart deploy/order`. Reset: set back to `demo-token-good` |
 
-### Resource limits
+### Resource limits + HPA
 
 `k8s/order.yaml` declares per-pod resource bounds so a Horizontal Pod Autoscaler can target the deployment:
 - **requests:** cpu `100m`, memory `64Mi`
 - **limits:**   cpu `250m`, memory `128Mi`
 
 These intentionally low ceilings are what make the k6 load test (below) reliably push order-service over its CPU target and trigger scaling.
+
+`k8s/hpa.yaml` is the `HorizontalPodAutoscaler` (autoscaling/v2) that pairs with the above:
+- **scaleTargetRef:** `deploy/order`
+- **min/max replicas:** 1 / 5
+- **metric:** Resource cpu, Utilization, averageUtilization 70
+
+Applied automatically by `scripts/deploy.sh` as part of `kubectl apply -f k8s/`. Requires metrics-server in the cluster — present on GKE by default; typically NOT installed on local Docker Desktop, in which case the HPA object exists but the CPU metric reports `<unknown>` and no scaling happens. The Deployment runs normally either way.
 
 ### Test
 
@@ -371,8 +378,10 @@ Endpoints: `POST /stock/seed`, `POST /cache/seed`, `POST /cache/flush`, `POST /d
 **Spec (Part B):** "API tests (payment)".
 **Why deviation:** pytest already gives clean API-test ergonomics and the rest of the system uses pytest for two of the three other services. Treating "API tests" as just "pytest hitting HTTP" keeps the testing surface coherent without adding a fourth tool. Postman/Newman remains the order-service test, satisfying the tool-variety intent.
 
-### 9. The carried-over scripts (`scripts/deploy.sh`, `scripts/break-auth.sh`, etc.) were not updated for new services
-**Why:** out of scope for this build. They still work for the auth-only break/restore demo flow. A future "enterprise deploy.sh" that brings up payment + redis + db is straightforward but deferred.
+### 9. The carried-over scripts (`scripts/deploy.sh`, `scripts/break-auth.sh`, etc.) were not updated for new services *(partially resolved)*
+**Original:** out of scope for the original four-phase build. They still worked for the auth-only break/restore demo flow.
+
+**Now:** `scripts/deploy.sh` has been updated to bring up the full current stack — pre-creates both Kafka topics (`order-placed` and `payment-confirmed`), waits for every service + infra Deployment (auth, order, payment, inventory, redis, db) to be Available, and rollout-restarts all three kafkajs clients (order, payment, inventory) after Kafka is up. It also applies the new HPA on order via `kubectl apply -f k8s/`. The only remaining deferrals are `break-auth.sh` / `restore.sh` / `sanity-check.sh` / `place-order.sh`, which still encode only the original three-service flow and don't know about payment, redis, db, or the second topic. Those, plus any services not yet built (product-catalog, user-session), are later-phase work.
 
 ### 10. CLAUDE.md was stale at the time of the original four-phase build
 At the time of the as-built write, `CLAUDE.md` still described the pre-enterprise topology (three services, one topic). It has since been refreshed in a docs-only pass to match the 4-service reality (payment, `payment-confirmed`, Postgres, Redis, inventory's full convergence + cache/DB surface). `README.md` was refreshed in the same pass. `ARCHITECTURE.md` was already accurate and was not touched.

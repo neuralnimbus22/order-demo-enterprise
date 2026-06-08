@@ -1,0 +1,26 @@
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: order
+  namespace: order-demo
+  labels:
+    app: order
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: order
+  minReplicas: 1
+  maxReplicas: 5
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 70
+# NOTE: HPA requires metrics-server in the cluster.
+# - GKE: metrics-server is enabled by default; the HPA will scale under load.
+# - Local Docker Desktop: metrics-server is typically NOT installed, so this
+#   object will exist but `kubectl get hpa` will show `<unknown>` for the metric
+#   and no scaling will occur. The Deployment still runs normally.
