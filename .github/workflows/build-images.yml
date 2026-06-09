@@ -23,7 +23,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        service: [auth, order, payment, inventory, product-catalog]
+        service: [auth, order, payment, inventory, product-catalog, user-session]
 
     steps:
       - name: Checkout

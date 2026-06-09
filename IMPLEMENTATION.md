@@ -9,6 +9,8 @@ All components run in the `order-demo` namespace. Image pattern: `ghcr.io/neural
 ## Topology (as built)
 
 ```
+Order pipeline (backend):
+
 auth-service ──┐
                │ (Bearer token authorize)
 order-service ─┤── publishes ──► Kafka: order-placed ──────┐
@@ -18,6 +20,10 @@ order-service ─┤── publishes ──► Kafka: order-placed ────�
 product-catalog                                             │
                                                             │
 payment-service ── publishes ──► Kafka: payment-confirmed ──┘
+
+Human identity (standalone — for the Phase 2 UI):
+
+user-session   /register · /login (issues signed JWT) · /validate
 ```
 
 | Component | In-cluster address | Manifest |
@@ -27,6 +33,7 @@ payment-service ── publishes ──► Kafka: payment-confirmed ──┘
 | inventory | `inventory.order-demo.svc.cluster.local:3003` | `k8s/inventory.yaml` |
 | payment | `payment.order-demo.svc.cluster.local:3004` | `k8s/payment.yaml` |
 | product-catalog | `product-catalog.order-demo.svc.cluster.local:3005` | `k8s/product-catalog.yaml` |
+| user-session | `user-session.order-demo.svc.cluster.local:3006` | `k8s/user-session.yaml` |
 | kafka | `kafka.order-demo.svc.cluster.local:9092` | `kafka/kafka.yaml` |
 | redis | `redis.order-demo.svc.cluster.local:6379` | `k8s/redis.yaml` |
 | db (postgres) | `db.order-demo.svc.cluster.local:5432` | `k8s/db.yaml` |
@@ -239,6 +246,93 @@ CREATE TABLE IF NOT EXISTS products (
 
 ---
 
+## user-session service (Phase 1c — new)
+
+**Source:** `services/user-session/server.js` · **Port:** `3006`
+
+Human-identity service for the Phase 2 UI. Real `/register`, `/login` (issues signed JWTs), `/validate` (verifies them). **Standalone — not on the order pipeline. No other backend service calls it.**
+
+### Distinct from `auth-service` (do not confuse the two)
+
+| | `auth-service` | `user-session` |
+|---|---|---|
+| What it authorizes | an ORDER in the backend | a HUMAN logging into the UI |
+| Token model | static Bearer-token catalogue (`demo-token-good`, `demo-token-readonly`) | signed JWTs (HS256 via `jsonwebtoken`) |
+| Storage | none — token catalogue is hard-coded in `server.js` | Postgres `users` table |
+| Who calls it | `order-service` (server-to-server, every /orders request) | the Phase 2 UI (browser → backend) |
+| On the order pipeline? | yes — deepest upstream | no — standalone |
+| Failure mode | DOWN / REJECT / DEGRADED demoed via scale-to-0 and `AUTH_DEGRADED_MS` | not part of any failure-signature demo |
+
+They do not share code, tokens, or a database table.
+
+### Storage decision (recorded)
+
+**Same Postgres instance (`db:5432`), same `inventory` database, NEW `users` table.** Same DB env-var set inventory and product-catalog use.
+
+**Why DB-backed (vs in-memory):**
+- **User registrations must survive pod restarts.** A person who registers via the UI on Monday expects their login to work Tuesday. In-memory storage would lose every non-seeded user every time the pod recycles.
+- **Pattern continuity.** product-catalog (Phase 1b) established the exact same pattern — same DB, new table — one phase ago. Reusing it is zero cognitive overhead and zero new infra.
+- **Test users persist too.** The pytest suite registers a fresh uuid-email per run; with DB-backed storage those rows remain, which is realistic for a demo environment.
+
+**Why same DB, new table (vs a separate `users` database in the same Postgres instance):** identical reasoning to the Phase 1b product-catalog decision. A separate database would require an init container or postgres init-script to `CREATE DATABASE`. Table-level separation (`users` vs `stock` vs `products`) is sufficient for a demo.
+
+**Trade-off acknowledged:** all three services use the single `inventory`/`inventory` credential, so each has read/write capability into the others' tables in principle. For a demo, fine. For production each service would use a distinct PostgreSQL role with `GRANT`s scoped to its own table(s).
+
+### Env vars
+
+| Var | Default | Purpose |
+|---|---|---|
+| `PORT` | `3006` | listen port |
+| `JWT_SECRET` | `dev-secret-change-me` | HMAC key for JWT signing. **In production this MUST come from a Kubernetes Secret**, not a plain env value. (Same trade-off already recorded for the shared DB credentials in `db.yaml`.) |
+| `JWT_EXPIRES` | `1h` | JWT expiry — passed straight to `jsonwebtoken.sign({…, expiresIn: …})`. Any zeit/ms expression accepted. |
+| `BCRYPT_COST` | `10` | bcryptjs work factor. 10 is the bcryptjs default. |
+| `DB_HOST` / `DB_PORT` / `DB_USER` / `DB_PASSWORD` / `DB_NAME` | `localhost` / `5432` / `inventory` / `inventory` / `inventory` | Postgres connection — same set inventory uses |
+| `DB_POOL_MAX` | `4` | pg pool size |
+| `DB_TIMEOUT_MS` | `2000` | pg `connectionTimeoutMillis` |
+| `SEED_USER_EMAIL` | `demo@example.com` | demo user seeded on startup |
+| `SEED_USER_PASSWORD` | `demo-password` | password for that demo user (idempotent — won't overwrite an existing row) |
+
+### Library choices (and why)
+
+- **`bcryptjs` (not `bcrypt`).** `bcrypt` is a native module that needs Python + node-gyp + alpine build deps (`apk add make g++ python3`) to compile. `bcryptjs` is pure JavaScript and runs on `node:20-alpine` with no extra layers. Identical hash format on the wire (`$2a$10$…`), so the choice is invisible to any future migration.
+- **`jsonwebtoken` (HS256).** Symmetric-key signing is enough for a single demo service — no public-key distribution to do. Default `expiresIn: 1h` keeps issued tokens short-lived.
+
+### Schema + seed (auto-created on startup)
+
+```sql
+CREATE TABLE IF NOT EXISTS users (
+  email         TEXT PRIMARY KEY,
+  password_hash TEXT NOT NULL,
+  created_at    TIMESTAMP NOT NULL DEFAULT NOW()
+);
+```
+
+`initSchemaAndSeed()` mirrors the inventory / product-catalog retry-on-boot pattern (30 attempts × 1 s sleep). On boot it bcrypt-hashes `SEED_USER_PASSWORD` and `INSERT … ON CONFLICT DO NOTHING` for `SEED_USER_EMAIL`. So:
+- A fresh DB → demo user is created.
+- A restarted pod against a DB that already has the demo user → no-op; whatever password is currently in the row (which may have been changed via `/register` flow or other ops work) is preserved.
+
+### Endpoints
+
+| Method | Path | Body / Header | Response |
+|---|---|---|---|
+| GET | `/health` | — | `200 {"status":"ok"}` |
+| POST | `/register` | `{"email":"…","password":"…"}` | `201 {"email":"…"}` · `400 {"error":"email and password are required"}` · `409 {"error":"email_exists"}` |
+| POST | `/login` | `{"email":"…","password":"…"}` | `200 {"token":"<jwt>","email":"…"}` · **`401 {"error":"invalid_credentials"}`** for wrong password, unknown email, or missing fields — opaque on purpose |
+| GET | `/validate` | `Authorization: Bearer <jwt>` | `200 {"email":"…","sub":"…","iat":<int>,"exp":<int>}` · `401 {"error":"invalid_token"}` if missing / malformed / signature-bad / expired |
+
+JWT claims include `sub` (subject = email), `email`, `iat`, `exp`. Signed with `JWT_SECRET` using HS256. Default expiry 1 h (`JWT_EXPIRES`).
+
+### Test
+
+- **File:** `tests/user-session/test_user_session.py` (pytest)
+- **Deps:** `tests/user-session/requirements.txt`
+- **Env:** `USER_SESSION_URL` (default `http://localhost:3006`)
+- **Run:** `USER_SESSION_URL=http://localhost:3006 pytest tests/user-session/test_user_session.py -v`
+- **Wiring:** **Not** in `ci-tests.yml`, **not** in any TestKube workflow. Lives in its folder for any orchestrator to pick up; pipeline wiring deferred on purpose.
+- **Coverage:** `/health` · register (success + duplicate 409 + missing fields 400) · login (success + wrong password 401 + unknown email 401, both opaque) · `/validate` (good JWT → identity claims + missing → 401 + garbage → 401). Generates a fresh uuid-email per run so re-runs against the same DB don't 409 on the first register.
+
+---
+
 ## inventory-service (Phase 2, 3, 4 — extended each phase)
 
 **Source:** `services/inventory/server.js` · **Port:** `3003`
@@ -402,7 +496,7 @@ Two GitHub Actions workflows live in `.github/workflows/`. Both target the live 
 ### `build-images.yml` — multi-arch image builds → GHCR
 - **Triggers:** push to `main` (filtered to `services/**` or this workflow file) and tags matching `v*`.
 - **Permissions:** `contents: read`, `packages: write`.
-- **Strategy:** matrix over `[auth, order, payment, inventory, product-catalog]`, `fail-fast: false`, per-service GHA cache scope.
+- **Strategy:** matrix over `[auth, order, payment, inventory, product-catalog, user-session]`, `fail-fast: false`, per-service GHA cache scope.
 - **Steps:** checkout → GHCR login (`github.actor` / `secrets.GITHUB_TOKEN`) → setup QEMU → setup Buildx → `docker/build-push-action` with `platforms: linux/amd64,linux/arm64`, `push: true`, tag `ghcr.io/neuralnimbus22/order-demo-<service>:latest`.
 - **Why multi-arch:** the same `:latest` tag must work on Apple Silicon developer machines (arm64) and on GKE / cloud nodes (amd64).
 - **Note:** adding a new service is a one-line matrix change. Forgetting it → pod schedules but `ImagePullBackOff` on the cluster because the image never builds/pushes.

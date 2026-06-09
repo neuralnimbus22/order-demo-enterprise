@@ -33,12 +33,12 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # only insofar as Kafka is handled separately above; everything in this list
 # runs in parallel under the hood but `kubectl wait` is sequential here for
 # clear per-deployment progress lines.
-SERVICES=( auth order payment inventory product-catalog )
+SERVICES=( auth order payment inventory product-catalog user-session )
 INFRA=( redis db )
 
 # Subset of services that use kafkajs and therefore need the post-Kafka rollout
-# restart (see step 6 above). auth + product-catalog have no Kafka client so
-# they're not in this list.
+# restart (see step 6 above). auth + product-catalog + user-session have no
+# Kafka client so they're not in this list.
 KAFKA_CLIENTS=( order payment inventory )
 
 ok()      { echo "[OK]   $*"; }
