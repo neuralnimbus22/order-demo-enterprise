@@ -42,10 +42,10 @@ The application + the raw plumbing that any test orchestrator can drive:
 
 | Path | Contents |
 |---|---|
-| `services/auth`, `services/order`, `services/payment`, `services/inventory`, `services/product-catalog` | The five Node.js services |
+| `services/auth`, `services/order`, `services/payment`, `services/inventory`, `services/product-catalog`, `services/user-session` | The six Node.js services. `auth-service` and `user-session` are intentionally separate identity concepts — auth authorizes ORDERS in the backend; user-session is human login for the UI. |
 | `kafka/` | KRaft-mode single-broker Kafka manifests; topics `order-placed` and `payment-confirmed` |
 | `k8s/` | Per-service Deployment + Service manifests + namespace, `redis.yaml` and `db.yaml` for the backing infra, and `hpa.yaml` (HPA on order-service for the load-test scaling demo) |
-| `tests/auth`, `tests/order`, `tests/payment`, `tests/inventory`, `tests/product-catalog` | Per-service test files (pytest, Newman, pytest, pytest, pytest) — runnable standalone. `tests/product-catalog` is not wired into ci-tests.yml yet (deferred). |
+| `tests/auth`, `tests/order`, `tests/payment`, `tests/inventory`, `tests/product-catalog`, `tests/user-session` | Per-service test files (pytest, Newman, pytest, pytest, pytest, pytest) — runnable standalone. `tests/product-catalog` and `tests/user-session` are not wired into ci-tests.yml yet (deferred). |
 | `tests/load` | k6 load test that drives `POST /orders` hard enough to trigger HPA scaling on order-service |
 | `scripts/` | `deploy.sh` (one-command bring-up), `break-auth.sh`, `restore.sh`, `sanity-check.sh`, `place-order.sh` |
 | `.github/workflows/` | `build-images.yml` (multi-arch image builds → GHCR) and `ci-tests.yml` (sequential test runs) |

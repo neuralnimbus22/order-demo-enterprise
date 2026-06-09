@@ -1,0 +1,83 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: user-session
+  namespace: order-demo
+  labels:
+    app: user-session
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: user-session
+  template:
+    metadata:
+      labels:
+        app: user-session
+    spec:
+      containers:
+        - name: user-session
+          image: ghcr.io/neuralnimbus22/order-demo-user-session:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 3006
+          env:
+            - name: PORT
+              value: "3006"
+            # Local-demo JWT secret. In a real deploy this would come from a
+            # Kubernetes Secret — same trade-off already recorded for the
+            # shared DB credentials in db.yaml.
+            - name: JWT_SECRET
+              value: dev-secret-change-me
+            # Reuses the existing `db` Postgres + `inventory` credentials.
+            # User rows live in a NEW `users` table cleanly separate from
+            # inventory's `stock` and product-catalog's `products` tables —
+            # see IMPLEMENTATION.md for the storage decision and rationale.
+            - name: DB_HOST
+              value: db.order-demo.svc.cluster.local
+            - name: DB_PORT
+              value: "5432"
+            - name: DB_USER
+              value: inventory
+            - name: DB_PASSWORD
+              value: inventory
+            - name: DB_NAME
+              value: inventory
+          resources:
+            requests:
+              cpu: 100m
+              memory: 64Mi
+            limits:
+              cpu: 250m
+              memory: 128Mi
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 3006
+            initialDelaySeconds: 2
+            periodSeconds: 3
+            failureThreshold: 6
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 3006
+            initialDelaySeconds: 10
+            periodSeconds: 15
+            failureThreshold: 3
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: user-session
+  namespace: order-demo
+  labels:
+    app: user-session
+spec:
+  type: ClusterIP
+  selector:
+    app: user-session
+  ports:
+    - name: http
+      port: 3006
+      targetPort: 3006
