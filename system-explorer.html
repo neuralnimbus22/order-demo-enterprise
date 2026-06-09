@@ -1,0 +1,579 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>order-demo-enterprise · System Explorer</title>
+<style>
+  :root{
+    --bg:#0f172a; --panel:#172033; --panel2:#1e293b; --border:#2c3a52;
+    --text:#e2e8f0; --muted:#93a4bd; --teal:#2dd4bf; --teal-dim:#0f766e;
+    --amber:#f59e0b; --violet:#a78bfa; --red:#f87171; --green:#34d399;
+    --font:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--text);font-family:var(--font);line-height:1.5}
+  .wrap{max-width:1160px;margin:0 auto;padding:32px 24px 80px}
+  header h1{font-size:26px;margin:0 0 4px;letter-spacing:-.3px}
+  header .sub{color:var(--muted);font-size:14px;margin-bottom:6px}
+  .legend{display:flex;gap:18px;flex-wrap:wrap;margin:18px 0 8px;font-size:12.5px;color:var(--muted)}
+  .legend span{display:inline-flex;align-items:center;gap:7px}
+  .dot{width:11px;height:11px;border-radius:3px;display:inline-block}
+  .dot.svc{background:var(--teal)} .dot.kafka{background:var(--amber)} .dot.infra{background:var(--violet)}
+
+  .toolbar{display:flex;gap:10px;align-items:center;margin:14px 0 10px;flex-wrap:wrap}
+  button.tool{background:var(--panel2);color:var(--text);border:1px solid var(--border);
+    padding:8px 14px;border-radius:8px;font-size:13px;cursor:pointer;font-family:var(--font)}
+  button.tool:hover{border-color:var(--teal)}
+  button.tool.primary{background:var(--teal-dim);border-color:var(--teal)}
+  .hint{color:var(--muted);font-size:12.5px}
+
+  .diagram-scroll{overflow-x:auto;border:1px solid var(--border);border-radius:14px;background:
+    radial-gradient(circle at 20% 10%, #15203a 0, var(--panel) 60%);padding:6px}
+  .canvas{position:relative;width:1080px;height:540px;margin:0 auto}
+  .canvas svg{position:absolute;inset:0;width:1080px;height:540px;pointer-events:none}
+  .standalone-divider{stroke:#3b4d6b;stroke-dasharray:4 4;stroke-width:1;fill:none;opacity:.5}
+  .standalone-label{fill:var(--muted);font-size:11px;font-family:var(--mono);font-style:italic}
+  .node{position:absolute;width:152px;height:58px;border-radius:11px;background:var(--panel2);
+    border:1px solid var(--border);border-left:4px solid var(--teal);padding:8px 12px;cursor:pointer;
+    transition:transform .12s,box-shadow .12s,border-color .12s,opacity .2s;z-index:2}
+  .node:hover{transform:translateY(-2px);box-shadow:0 8px 22px rgba(0,0,0,.4)}
+  .node .nm{font-weight:600;font-size:13.5px}
+  .node .meta{font-size:11px;color:var(--muted);font-family:var(--mono);margin-top:2px}
+  .node.kafka{border-left:none;border:1.5px dashed var(--amber);background:#1d1a10}
+  .node.infra{border-left-color:var(--violet)}
+  .node.active{border-color:var(--teal);box-shadow:0 0 0 2px var(--teal),0 8px 22px rgba(0,0,0,.5)}
+  .node.kafka.active{border-color:var(--amber);box-shadow:0 0 0 2px var(--amber)}
+  .node.infra.active{box-shadow:0 0 0 2px var(--violet)}
+  .node.involved{box-shadow:0 0 0 2px var(--red);border-color:var(--red)}
+  .node.dim{opacity:.32}
+  .node.pulse{animation:pulse .6s ease}
+  @keyframes pulse{0%{box-shadow:0 0 0 0 rgba(45,212,191,.6)}100%{box-shadow:0 0 0 16px rgba(45,212,191,0)}}
+  .edge{stroke:#3b4d6b;stroke-width:2;fill:none}
+  .edge.lit{stroke:var(--teal);stroke-width:2.5}
+  .edgelabel{fill:var(--muted);font-size:10.5px;font-family:var(--mono)}
+  .kbracket{fill:var(--amber);font-size:11px;font-family:var(--mono);opacity:.8}
+
+  .grid{display:grid;grid-template-columns:1fr 1fr;gap:18px;margin-top:22px}
+  @media(max-width:880px){.grid{grid-template-columns:1fr}}
+  .card{background:var(--panel);border:1px solid var(--border);border-radius:14px;padding:20px 22px}
+  .card h2{font-size:13px;text-transform:uppercase;letter-spacing:1px;color:var(--muted);margin:0 0 14px}
+  #detail .title{display:flex;align-items:center;gap:10px;font-size:19px;font-weight:600}
+  #detail .badge{font-size:11px;font-family:var(--mono);color:var(--muted);border:1px solid var(--border);
+    padding:2px 8px;border-radius:20px}
+  #detail .role{margin:12px 0 16px;color:#cdd8ea}
+  #detail h3{font-size:12px;text-transform:uppercase;letter-spacing:.6px;color:var(--teal);margin:16px 0 7px}
+  #detail ul{margin:0;padding-left:18px}
+  #detail li{margin:4px 0;font-size:13.5px}
+  #detail code,.mono{font-family:var(--mono);font-size:12.5px;background:#0d1626;padding:1px 6px;border-radius:5px}
+  .chips{display:flex;flex-wrap:wrap;gap:7px;margin-top:6px}
+  .chip{font-size:12px;border:1px solid var(--border);border-radius:20px;padding:4px 11px;cursor:pointer;
+    color:var(--red);background:#1c1418}
+  .chip:hover{border-color:var(--red)}
+  .empty{color:var(--muted);font-size:14px}
+
+  .sig{border:1px solid var(--border);border-radius:10px;padding:12px 14px;margin-bottom:10px;cursor:pointer;
+    transition:border-color .12s,background .12s}
+  .sig:hover{border-color:var(--red);background:#1a1418}
+  .sig.on{border-color:var(--red);background:#1a1418}
+  .sig .st{font-weight:600;font-size:14px;display:flex;justify-content:space-between;align-items:center}
+  .sig .tag{font-size:10.5px;font-family:var(--mono);color:var(--muted)}
+  .sig .ln{font-size:12.5px;color:var(--muted);margin-top:5px}
+  .sig .ln b{color:#cdd8ea;font-weight:600}
+  footer{color:var(--muted);font-size:12px;margin-top:30px;text-align:center}
+
+  /* Tabs */
+  .tabs{display:flex;gap:0;border-bottom:1px solid var(--border);margin:18px 0 22px}
+  .tab{background:transparent;color:var(--muted);border:none;border-bottom:2px solid transparent;
+    padding:10px 18px;font-size:13px;cursor:pointer;font-family:var(--font);
+    transition:color .12s,border-color .12s;letter-spacing:.2px}
+  .tab:hover{color:var(--text)}
+  .tab.active{color:var(--teal);border-bottom-color:var(--teal)}
+  .tab-pane{display:none}
+  .tab-pane.active{display:block}
+
+  /* Workflows tab */
+  .wf-section{margin-bottom:24px}
+  .wf-section > h2{font-size:13px;text-transform:uppercase;letter-spacing:1px;color:var(--muted);margin:0 0 14px}
+  .wf-group{margin-top:8px}
+  .wf-group h3{font-size:11.5px;text-transform:uppercase;letter-spacing:.6px;color:var(--teal);margin:14px 0 10px}
+  .wf-group.func h3{color:var(--violet)}
+  .wf-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:12px}
+  .wf-card{background:var(--panel2);border:1px solid var(--border);border-radius:10px;
+    padding:12px 14px;border-left:3px solid var(--teal);transition:border-color .12s,transform .12s}
+  .wf-card:hover{transform:translateY(-1px);border-color:var(--teal)}
+  .wf-card.func{border-left-color:var(--violet)}
+  .wf-card.func:hover{border-color:var(--violet)}
+  .wf-card .wf-nm{font-weight:600;font-size:13.5px;font-family:var(--mono)}
+  .wf-card .wf-desc{font-size:12.5px;color:#cdd8ea;margin-top:4px;line-height:1.45}
+  .wf-card .wf-how{font-size:11.5px;color:var(--muted);font-family:var(--mono);margin-top:6px}
+
+  /* Orchestrator hero */
+  .orch{display:flex;flex-direction:column;align-items:center;gap:10px;margin:6px 0 14px}
+  .orch-stage{width:100%;max-width:780px;background:var(--panel2);
+    border:1px solid var(--border);border-radius:12px;padding:14px 18px}
+  .orch-stage.symptom{border-left:3px solid var(--teal)}
+  .orch-stage.diag{border-left:3px solid var(--red)}
+  .orch-stage .ttl{font-size:11px;text-transform:uppercase;letter-spacing:.7px;color:var(--muted);margin-bottom:8px}
+  .orch-stage .nm{font-weight:600;font-size:14px;font-family:var(--mono)}
+  .orch-stage .sub{font-size:12px;color:var(--muted);margin-top:3px}
+  .orch-arrow{color:var(--muted);font-size:12.5px;font-family:var(--mono);display:flex;align-items:center;gap:6px}
+  .orch-substages{display:flex;flex-direction:column;gap:12px;margin-top:8px}
+  .orch-row{display:flex;gap:10px;flex-wrap:wrap}
+  .orch-box{flex:1;min-width:200px;background:var(--panel);border:1px solid var(--border);
+    border-radius:8px;padding:10px 12px}
+  .orch-box .bx-lbl{font-size:10.5px;text-transform:uppercase;letter-spacing:.6px;color:var(--muted);margin-bottom:6px}
+  .orch-box .bx-items{display:flex;gap:6px;flex-wrap:wrap}
+  .orch-box .bx-it{font-family:var(--mono);font-size:12px;background:#0d1626;padding:3px 8px;border-radius:5px;color:var(--text)}
+  .orch-box.path-shared{border-left:3px solid var(--violet)}
+  .orch-box.path-order{border-left:3px solid var(--teal)}
+  .orch-box.path-payment{border-left:3px solid var(--amber)}
+  .orch-box.path-converge{border-left:3px solid var(--green)}
+  .orch-takeaway{font-size:13.5px;color:#cdd8ea;background:#0d1626;border-left:3px solid var(--teal);
+    padding:10px 14px;border-radius:8px;margin:14px auto 0;max-width:780px;line-height:1.5}
+  .orch-footnote{font-size:12px;color:var(--muted);margin:10px auto 0;max-width:780px;font-style:italic}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>order-demo-enterprise</h1>
+    <div class="sub">A microservices order pipeline running in Kubernetes — your system-under-test for TestKube demos.</div>
+    <div class="legend">
+      <span><i class="dot svc"></i> Custom service (your code)</span>
+      <span><i class="dot kafka"></i> Kafka topic</span>
+      <span><i class="dot infra"></i> Backing infrastructure (stock image)</span>
+    </div>
+  </header>
+
+  <div class="tabs" role="tablist">
+    <button class="tab active" data-tab="system" role="tab">System</button>
+    <button class="tab"        data-tab="workflows" role="tab">Workflows</button>
+  </div>
+
+  <div class="tab-pane active" id="tab-system">
+  <div class="toolbar">
+    <button class="tool primary" id="playBtn">▶ Play the happy path</button>
+    <button class="tool" id="resetBtn">Reset</button>
+    <span class="hint">Click any box for details · click a failure below to see what breaks.</span>
+  </div>
+
+  <div class="diagram-scroll">
+    <div class="canvas" id="canvas">
+      <svg viewBox="0 0 1080 540">
+        <defs>
+          <marker id="arr" markerWidth="9" markerHeight="9" refX="7" refY="4.5" orient="auto">
+            <path d="M0,0 L9,4.5 L0,9 Z" fill="#3b4d6b"></path>
+          </marker>
+          <marker id="arrlit" markerWidth="9" markerHeight="9" refX="7" refY="4.5" orient="auto">
+            <path d="M0,0 L9,4.5 L0,9 Z" fill="#2dd4bf"></path>
+          </marker>
+        </defs>
+        <path class="edge" data-e="auth-order"     d="M176,125 L250,125" marker-end="url(#arr)"></path>
+        <path class="edge" data-e="order-op"       d="M408,125 L466,125" marker-end="url(#arr)"></path>
+        <path class="edge" data-e="order-catalog"  d="M332,154 L332,200" stroke-dasharray="4 3" marker-end="url(#arr)"></path>
+        <path class="edge" data-e="payment-pc"     d="M408,365 L466,365" marker-end="url(#arr)"></path>
+        <path class="edge" data-e="op-inv"         d="M622,125 C662,125 648,245 684,245" marker-end="url(#arr)"></path>
+        <path class="edge" data-e="pc-inv"         d="M622,365 C662,365 648,245 684,245" marker-end="url(#arr)"></path>
+        <path class="edge" data-e="inv-redis"      d="M840,245 C874,245 872,149 900,149" marker-end="url(#arr)"></path>
+        <path class="edge" data-e="inv-db"         d="M840,245 C874,245 872,341 900,341" marker-end="url(#arr)"></path>
+        <text class="edgelabel" x="190" y="117">authorize</text>
+        <text class="edgelabel" x="418" y="117">publish</text>
+        <text class="edgelabel" x="340" y="183">validate sku · optional</text>
+        <text class="edgelabel" x="418" y="357">publish</text>
+        <text class="edgelabel" x="636" y="180">consume</text>
+        <text class="edgelabel" x="636" y="318">consume</text>
+        <text class="edgelabel" x="852" y="188">cache</text>
+        <text class="edgelabel" x="846" y="312">source of truth</text>
+        <text class="kbracket" x="470" y="86">Apache Kafka</text>
+        <!-- Standalone region for user-session: dashed divider + label -->
+        <path class="standalone-divider" d="M20,430 L1060,430"></path>
+        <text class="standalone-label" x="40" y="450">Independent · Phase 2 UI login — NOT on the order pipeline</text>
+      </svg>
+
+      <div class="node"       style="left:24px;top:96px"   data-id="auth"><div class="nm">auth-service</div><div class="meta">:3001 · IAM</div></div>
+      <div class="node"       style="left:256px;top:96px"  data-id="order"><div class="nm">order-service</div><div class="meta">:3002</div></div>
+      <div class="node"       style="left:256px;top:200px" data-id="catalog"><div class="nm">product-catalog</div><div class="meta">:3005 · side-call</div></div>
+      <div class="node"       style="left:256px;top:336px" data-id="payment"><div class="nm">payment-service</div><div class="meta">:3004</div></div>
+      <div class="node kafka" style="left:470px;top:96px"  data-id="op"><div class="nm">order-placed</div><div class="meta">topic</div></div>
+      <div class="node kafka" style="left:470px;top:336px" data-id="pc"><div class="nm">payment-confirmed</div><div class="meta">topic</div></div>
+      <div class="node"       style="left:688px;top:216px" data-id="inventory"><div class="nm">inventory-service</div><div class="meta">:3003 · converges</div></div>
+      <div class="node infra" style="left:904px;top:120px" data-id="redis"><div class="nm">Redis</div><div class="meta">:6379 · cache</div></div>
+      <div class="node infra" style="left:904px;top:312px" data-id="db"><div class="nm">Postgres</div><div class="meta">:5432 · store</div></div>
+      <!-- Standalone region (below the dashed divider): user-session has no edges -->
+      <div class="node"       style="left:24px;top:460px"  data-id="usersession"><div class="nm">user-session</div><div class="meta">:3006 · standalone</div></div>
+    </div>
+  </div>
+
+  <div class="grid">
+    <div class="card" id="detail">
+      <h2>Component</h2>
+      <p class="empty">Click any box in the diagram above to explore that component — what it does, its endpoints, and how it can fail.</p>
+    </div>
+    <div class="card">
+      <h2>The seven failure signatures</h2>
+      <div id="sigs"></div>
+    </div>
+  </div>
+  </div><!-- /#tab-system -->
+
+  <div class="tab-pane" id="tab-workflows">
+    <section class="card wf-section">
+      <h2>Building blocks (17 workflows)</h2>
+
+      <div class="wf-group">
+        <h3>Health checks (9)</h3>
+        <div class="wf-grid">
+          <div class="wf-card">
+            <div class="wf-nm">auth-health</div>
+            <div class="wf-desc">auth reachable</div>
+            <div class="wf-how">HTTP GET /health on auth:3001</div>
+          </div>
+          <div class="wf-card">
+            <div class="wf-nm">order-health</div>
+            <div class="wf-desc">order reachable</div>
+            <div class="wf-how">HTTP GET /health on order:3002</div>
+          </div>
+          <div class="wf-card">
+            <div class="wf-nm">payment-health</div>
+            <div class="wf-desc">payment reachable</div>
+            <div class="wf-how">HTTP GET /health on payment:3004</div>
+          </div>
+          <div class="wf-card">
+            <div class="wf-nm">inventory-health</div>
+            <div class="wf-desc">inventory reachable (pure liveness, does not touch DB)</div>
+            <div class="wf-how">HTTP GET /health on inventory:3003</div>
+          </div>
+          <div class="wf-card">
+            <div class="wf-nm">product-catalog-health</div>
+            <div class="wf-desc">product-catalog reachable</div>
+            <div class="wf-how">HTTP GET /health on product-catalog:3005</div>
+          </div>
+          <div class="wf-card">
+            <div class="wf-nm">user-session-health</div>
+            <div class="wf-desc">user-session reachable (standalone — not on the order pipeline)</div>
+            <div class="wf-how">HTTP GET /health on user-session:3006</div>
+          </div>
+          <div class="wf-card">
+            <div class="wf-nm">kafka-health</div>
+            <div class="wf-desc">kafka broker reachable</div>
+            <div class="wf-how">TCP probe on kafka:9092</div>
+          </div>
+          <div class="wf-card">
+            <div class="wf-nm">redis-health</div>
+            <div class="wf-desc">redis answering</div>
+            <div class="wf-how">redis-cli PING on redis:6379</div>
+          </div>
+          <div class="wf-card">
+            <div class="wf-nm">db-health</div>
+            <div class="wf-desc">postgres reachable</div>
+            <div class="wf-how">TCP probe on db:5432</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="wf-group func">
+        <h3>Functional checks (8)</h3>
+        <div class="wf-grid">
+          <div class="wf-card func">
+            <div class="wf-nm">auth-authorize</div>
+            <div class="wf-desc">auth correctly authorizes / rejects tokens</div>
+            <div class="wf-how">pytest</div>
+          </div>
+          <div class="wf-card func">
+            <div class="wf-nm">order-place</div>
+            <div class="wf-desc">an order can be placed end to end</div>
+            <div class="wf-how">Postman / Newman</div>
+          </div>
+          <div class="wf-card func">
+            <div class="wf-nm">payment-confirm</div>
+            <div class="wf-desc">a payment can be confirmed</div>
+            <div class="wf-how">pytest</div>
+          </div>
+          <div class="wf-card func">
+            <div class="wf-nm">inventory-fulfillment</div>
+            <div class="wf-desc">an order converges (needs BOTH order-placed + payment-confirmed). This is the "symptom" test.</div>
+            <div class="wf-how">pytest</div>
+          </div>
+          <div class="wf-card func">
+            <div class="wf-nm">product-catalog-list</div>
+            <div class="wf-desc">GET /products returns the seeded catalog; GET /products/:id resolves a known sku and 404s on an unknown one.</div>
+            <div class="wf-how">pytest</div>
+          </div>
+          <div class="wf-card func">
+            <div class="wf-nm">user-session-login</div>
+            <div class="wf-desc">end-to-end identity round trip — register → login → validate the issued JWT. Used by the Phase 2 UI flow; not part of order RCA.</div>
+            <div class="wf-how">pytest</div>
+          </div>
+          <div class="wf-card func">
+            <div class="wf-nm">cache-consistency</div>
+            <div class="wf-desc">Redis cache agrees with Postgres (catches stale cache)</div>
+            <div class="wf-how">pytest</div>
+          </div>
+          <div class="wf-card func">
+            <div class="wf-nm">db-query</div>
+            <div class="wf-desc">distinguishes DB down (refused) vs degraded (timeout)</div>
+            <div class="wf-how">curl on /db/health</div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="card wf-section">
+      <h2>RCA Orchestrator (two-paths) — the hero</h2>
+      <div class="orch">
+        <div class="orch-stage symptom">
+          <div class="ttl">Symptom</div>
+          <div class="nm">inventory-fulfillment</div>
+          <div class="sub">"did an order make it through?"</div>
+        </div>
+
+        <div class="orch-arrow">▼ on failure → diagnose</div>
+
+        <div class="orch-stage diag">
+          <div class="ttl">Diagnose</div>
+          <div class="orch-substages">
+            <div class="orch-row">
+              <div class="orch-box path-shared">
+                <div class="bx-lbl">Stage 1 — Shared infrastructure</div>
+                <div class="sub" style="margin:0 0 6px 0;font-size:11.5px;color:var(--muted)">both paths depend on these</div>
+                <div class="bx-items">
+                  <span class="bx-it">kafka</span>
+                  <span class="bx-it">redis</span>
+                  <span class="bx-it">db</span>
+                </div>
+              </div>
+            </div>
+            <div class="orch-row">
+              <div class="orch-box path-order">
+                <div class="bx-lbl">Stage 2 · Order path</div>
+                <div class="bx-items">
+                  <span class="bx-it">auth</span>
+                  <span class="bx-it">→</span>
+                  <span class="bx-it">order</span>
+                  <span class="bx-it" style="opacity:.55;border:1px dashed var(--border);background:transparent">+ product-catalog (only if sku)</span>
+                </div>
+              </div>
+              <div class="orch-box path-payment">
+                <div class="bx-lbl">Stage 2 · Payment path</div>
+                <div class="bx-items">
+                  <span class="bx-it">payment</span>
+                </div>
+              </div>
+            </div>
+            <div class="orch-row">
+              <div class="orch-box path-converge">
+                <div class="bx-lbl">Stage 3 — Convergence</div>
+                <div class="bx-items">
+                  <span class="bx-it">inventory</span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="orch-takeaway">
+        When auth goes down, the whole <b>order-path</b> group turns red while <b>payment-path</b> stays green — you see which side broke at a glance, instead of reading 13 results.
+      </div>
+      <div class="orch-footnote">
+        Other orchestration patterns exist too (run-everything sequential audit, and a single-step signature diagnoser) — this topology-grouped version is the most legible for triage.
+      </div>
+      <div class="orch-footnote">
+        <b>user-session</b> is intentionally absent from the diagnose stages — it sits off the order pipeline (UI login only) and is never on the "order not fulfilled" symptom path.
+      </div>
+    </section>
+  </div><!-- /#tab-workflows -->
+
+  <footer>One symptom — "order not fulfilled" — seven distinguishable root causes. That's the discrimination this system is built to demonstrate.</footer>
+</div>
+
+<script>
+const C = {
+  auth:{nm:"auth-service",kind:"service",badge:":3001 · order-demo-auth",
+    role:"Authorizes every order. order-service calls it first, and nothing proceeds without its approval. It is the deepest upstream dependency in the chain.",
+    end:["GET /health → 200 (pure liveness)","POST /authorize → 200 authorized · 401 invalid_token · 403 insufficient_scope"],
+    note:"Validates a demo token: <code>demo-token-good</code> passes, <code>demo-token-readonly</code> gets 403, anything unknown gets 401. The knob <code>AUTH_DEGRADED_MS</code> makes /authorize sleep while /health stays instant.",
+    test:"tests/auth/test_auth.py (pytest)", fails:["auth-down","auth-reject","auth-degraded"]},
+  order:{nm:"order-service",kind:"service",badge:":3002 · order-demo-order",
+    role:"The middle of the chain. Calls auth to authorize, optionally validates a sku against product-catalog if one is supplied, and only on success publishes an order-placed event to Kafka. A victim, never a root cause.",
+    end:["GET /health → 200","POST /orders {id,item,qty,sku?} → 201 placed · 404 if sku unknown · 502 opaque on any auth OR catalog failure"],
+    note:"On any auth or catalog problem it returns a deliberately opaque <code>502 upstream dependency unavailable</code> — the symptom never names which dependency, so diagnosis is actually required. The catalog step is optional: when <code>sku</code> is in the body, order validates it; when <code>sku</code> is absent the catalog is not called at all and behavior is byte-identical to the no-catalog era. <b>Catalog-down looks identical to auth-down at this response layer</b> — disambiguate by probing the catalog edge directly.",
+    test:"tests/order/order.postman_collection.json (Postman / Newman)", fails:["auth-down","auth-reject","auth-degraded"]},
+  payment:{nm:"payment-service",kind:"service",badge:":3004 · order-demo-payment",
+    role:"A parallel entry point. Confirms a payment and publishes a payment-confirmed event to Kafka. Independent of auth.",
+    end:["GET /health → 200","POST /payments {id,amount} → 201 confirmed"],
+    note:"Publishes to the second topic. If it is down, the order can still be placed — only the payment half of the convergence goes missing.",
+    test:"tests/payment/test_payment.py (pytest)", fails:["payment-down"]},
+  inventory:{nm:"inventory-service",kind:"service",badge:":3003 · order-demo-inventory",
+    role:"The convergence point and where symptoms surface. It must receive BOTH order-placed AND payment-confirmed before it can fulfill an order. Reads stock from Redis, backed by Postgres.",
+    end:["GET /health → 200 (liveness, does NOT touch the DB)","GET /db/health → 200 / 503 (distinguishes timeout vs refused)","GET /fulfilled/:id → orderPlaced, paymentConfirmed, fulfilled, waitingFor[]","POST /fulfill → 200 · 409 DATA_INCONSISTENCY · 503 db_unavailable","POST /cache/seed, /cache/flush, /db/exhaust (admin knobs to induce failures)"],
+    note:"It runs an HTTP server, a Kafka consumer on both topics, a Redis client and a Postgres pool in one process. Its pool is capped at <code>2</code> on purpose so exhaustion is easy to demonstrate.",
+    test:"tests/inventory/test_inventory.py + test_cache_consistency.py", fails:["payment-down","stale-cache","db-down","db-degraded"]},
+  op:{nm:"order-placed",kind:"kafka",badge:"Kafka topic",
+    role:"The message boundary between order-service (producer) and inventory-service (consumer). One half of what inventory waits for.",
+    end:["Message: { id, item, qty, at }"],
+    note:"If this topic gets no message for an order, the upstream break is at auth or order. If it has the message but fulfillment still fails, the problem is downstream of here.",
+    test:"—", fails:["auth-down"]},
+  pc:{nm:"payment-confirmed",kind:"kafka",badge:"Kafka topic",
+    role:"The message boundary between payment-service and inventory-service. The other half of the convergence.",
+    end:["Message: { id, amount, confirmedAt }"],
+    note:"Present-or-missing here is exactly what tells you the payment branch broke versus the order branch.",
+    test:"—", fails:["payment-down"]},
+  redis:{nm:"Redis",kind:"infra",badge:":6379 · redis:7-alpine",
+    role:"A read-through cache in front of inventory's stock lookups. Stock keys live here with a 60s TTL.",
+    end:["redis-cli PING → PONG (health)","Holds stock:* keys"],
+    note:"The deceptive failure lives here: if the cache disagrees with the database, every service looks healthy but fulfillment fails on a data mismatch.",
+    test:"covered by test_cache_consistency.py", fails:["stale-cache"]},
+  db:{nm:"Postgres",kind:"infra",badge:":5432 · postgres:16-alpine",
+    role:"The source of truth for stock records. A single stock(sku, qty) table.",
+    end:["TCP 5432 (health probe)","Reached by inventory's pool (max 2 connections)"],
+    note:"Two distinct failures: gone entirely (connection refused) versus pool saturated (queries time out but the DB is up). The tiny pool makes the second easy to trigger.",
+    test:"reached via inventory tests", fails:["db-down","db-degraded"]},
+  catalog:{nm:"product-catalog",kind:"service",badge:":3005 · order-demo-product-catalog",
+    role:"Read-only product catalog. Resolves a sku for order-service when an order carries one. NOT on the Kafka path — it's a side-call from order, and only when <code>sku</code> is in the body. Postgres-backed (its own <code>products</code> table in the shared db).",
+    end:["GET /health → 200","GET /products → list of seeded products","GET /products/:id → product by sku · 404 if unknown sku"],
+    note:"The product <code>id</code> IS the sku — the same key inventory's <code>stock</code> table uses. Catalog's <code>stock</code> column is <b>display data only</b>; inventory's <code>stock</code> table is the source of truth for fulfillment. <b>If catalog is unreachable when a sku is supplied, order returns the same opaque 502 as an auth failure</b> — distinguishable only by probing this edge directly (not by the order response). Catalog has no failure signature on the core pipeline because it's only ever exercised on the optional sku path.",
+    test:"tests/product-catalog/test_product_catalog.py (pytest)", fails:[]},
+  usersession:{nm:"user-session",kind:"service",badge:":3006 · order-demo-user-session",
+    role:"Human-identity service for the Phase 2 UI — register / login / JWT validate. <b>Standalone</b> — not on the order pipeline, no backend service calls it, and it does not participate in fulfillment.",
+    end:["GET /health → 200","POST /register {email,password} → 201 · 409 email_exists · 400 missing fields","POST /login {email,password} → 200 {token,email} · 401 invalid_credentials (opaque)","GET /validate (Authorization: Bearer …) → 200 with identity claims · 401 invalid_token"],
+    note:"<b>Different identity concept from auth-service</b>, kept strictly separate. auth-service authorizes an ORDER with a static Bearer-token catalogue (server-to-server, on the pipeline). user-session authenticates a HUMAN with signed JWTs (for the UI). They share no code, tokens, or database table. Postgres-backed (<code>users</code> table); passwords hashed with bcryptjs; JWTs signed HS256 via jsonwebtoken.",
+    test:"tests/user-session/test_user_session.py (pytest)", fails:[]}
+};
+
+const SIG = [
+  {id:"auth-down",nm:"Auth DOWN",tag:"reachability",inv:["auth","order","op"],
+    trig:"Scale auth to 0 replicas",
+    sig:"order-placed is <b>never published</b>; a direct probe to auth gets <b>connection refused</b>.",
+    det:"The health check can't even connect to auth."},
+  {id:"auth-reject",nm:"Auth REJECT",tag:"behavioral",inv:["auth","order"],
+    trig:"order sends an invalid / insufficient token",
+    sig:"auth /health is 200, but /authorize returns <b>401/403</b>; order returns an opaque 502.",
+    det:"Auth is up and reachable — its logs show REJECT 401."},
+  {id:"auth-degraded",nm:"Auth DEGRADED",tag:"behavioral",inv:["auth","order"],
+    trig:"Set AUTH_DEGRADED_MS = 5000",
+    sig:"auth /health is instant 200, but /authorize blocks ~5s; order's 2s timeout fires → opaque 502.",
+    det:"Health passes but the functional call times out — slow, not down."},
+  {id:"payment-down",nm:"Payment DOWN",tag:"which-branch",inv:["payment","pc","inventory"],
+    trig:"Scale payment to 0",
+    sig:"order-placed <b>is</b> present, but payment-confirmed never arrives — inventory shows <b>waitingFor:[payment-confirmed]</b>.",
+    det:"One topic present, one missing — tells you exactly which branch broke."},
+  {id:"stale-cache",nm:"Stale Cache",tag:"data integrity",inv:["redis","inventory","db"],
+    trig:"Seed Redis with stock that disagrees with the DB",
+    sig:"Every /health is 200, yet /fulfill returns <b>409 DATA_INCONSISTENCY</b> with cacheQty ≠ dbQty.",
+    det:"Nothing is down — the data is just wrong. The hardest one to spot by eye."},
+  {id:"db-down",nm:"DB DOWN",tag:"reachability",inv:["db","inventory"],
+    trig:"Scale Postgres to 0",
+    sig:"/db/health returns <b>503 with ECONNREFUSED</b> on the db address.",
+    det:"Clean connection refused — the store is gone."},
+  {id:"db-degraded",nm:"DB DEGRADED",tag:"behavioral",inv:["db","inventory"],
+    trig:"Exhaust the size-2 connection pool via /db/exhaust",
+    sig:"db is up, but queries hang: /db/health <b>503 db_health_timeout</b>, /fulfill <b>503 timeout</b>.",
+    det:"Timeout, not refused — slow pool, not a dead DB. It auto-recovers."}
+];
+
+const EDGES_FOR = {
+  auth:["auth-order"], order:["auth-order","order-op","order-catalog"], payment:["payment-pc"],
+  op:["order-op","op-inv"], pc:["payment-pc","pc-inv"],
+  inventory:["op-inv","pc-inv","inv-redis","inv-db"], redis:["inv-redis"], db:["inv-db"],
+  catalog:["order-catalog"]
+  // usersession intentionally has no entry — standalone, no edges. showComponent
+  // uses EDGES_FOR[id]||[] so clicking it is graceful (no error, just no edges lit).
+};
+
+const $ = s=>document.querySelector(s);
+const nodes = [...document.querySelectorAll('.node')];
+const edges = [...document.querySelectorAll('.edge')];
+let playing=false;
+
+function clearState(){
+  nodes.forEach(n=>n.classList.remove('active','involved','dim','pulse'));
+  edges.forEach(e=>{e.classList.remove('lit');e.setAttribute('marker-end','url(#arr)');});
+  document.querySelectorAll('.sig').forEach(s=>s.classList.remove('on'));
+}
+
+function showComponent(id){
+  if(playing) return;
+  clearState();
+  const el = nodes.find(n=>n.dataset.id===id);
+  el.classList.add('active');
+  (EDGES_FOR[id]||[]).forEach(e=>{const p=document.querySelector(`[data-e="${e}"]`);p.classList.add('lit');p.setAttribute('marker-end','url(#arrlit)');});
+  const c = C[id];
+  const fails = c.fails.map(f=>`<span class="chip" data-sig="${f}">${SIG.find(s=>s.id===f).nm}</span>`).join('');
+  $('#detail').innerHTML = `
+    <h2>Component</h2>
+    <div class="title">${c.nm} <span class="badge">${c.badge}</span></div>
+    <p class="role">${c.role}</p>
+    <h3>Endpoints</h3><ul>${c.end.map(e=>`<li><span class="mono">${e}</span></li>`).join('')}</ul>
+    <h3>Good to know</h3><p style="font-size:13.5px;color:#cdd8ea;margin:0">${c.note}</p>
+    <h3>Test</h3><p class="mono" style="margin:0">${c.test}</p>
+    <h3>How it can fail</h3><div class="chips">${fails||'<span class="empty">—</span>'}</div>`;
+  document.querySelectorAll('.chip').forEach(ch=>ch.onclick=()=>showSignature(ch.dataset.sig));
+}
+
+function showSignature(id){
+  if(playing) return;
+  clearState();
+  const s = SIG.find(x=>x.id===id);
+  s.inv.forEach(nid=>{nodes.find(n=>n.dataset.id===nid).classList.add('involved');});
+  nodes.forEach(n=>{if(!s.inv.includes(n.dataset.id))n.classList.add('dim');});
+  document.querySelectorAll('.sig').forEach(el=>el.classList.toggle('on',el.dataset.sig===id));
+  $('#detail').innerHTML = `
+    <h2>Failure signature</h2>
+    <div class="title" style="color:var(--red)">${s.nm} <span class="badge">${s.tag}</span></div>
+    <h3 style="color:var(--red)">How to trigger it</h3><p style="margin:0;font-size:13.5px">${s.trig}</p>
+    <h3 style="color:var(--red)">What you see</h3><p style="margin:0;font-size:13.5px;color:#cdd8ea">${s.sig}</p>
+    <h3 style="color:var(--red)">How to tell it apart</h3><p style="margin:0;font-size:13.5px;color:#cdd8ea">${s.det}</p>
+    <p class="hint" style="margin-top:16px">Highlighted boxes above are the components involved.</p>`;
+}
+
+function renderSigs(){
+  $('#sigs').innerHTML = SIG.map(s=>`
+    <div class="sig" data-sig="${s.id}">
+      <div class="st">${s.nm} <span class="tag">${s.tag}</span></div>
+      <div class="ln">${s.sig}</div>
+    </div>`).join('');
+  document.querySelectorAll('.sig').forEach(el=>el.onclick=()=>showSignature(el.dataset.sig));
+}
+
+function playHappyPath(){
+  if(playing) return;
+  playing=true; clearState();
+  const seq=["auth","order","op","payment","pc","inventory","redis","db"];
+  const edgeSeq={order:"auth-order",op:"order-op",pc:"payment-pc",inventory:"op-inv",redis:"inv-redis",db:"inv-db"};
+  let i=0;
+  const step=()=>{
+    if(i>0){const prev=nodes.find(n=>n.dataset.id===seq[i-1]);prev&&prev.classList.remove('pulse');prev&&prev.classList.add('active');}
+    if(i>=seq.length){
+      const last=nodes.find(n=>n.dataset.id===seq[seq.length-1]);last.classList.add('active');
+      const pc=document.querySelector('[data-e="pc-inv"]');pc.classList.add('lit');pc.setAttribute('marker-end','url(#arrlit)');
+      const idb=document.querySelector('[data-e="inv-db"]');idb.classList.add('lit');idb.setAttribute('marker-end','url(#arrlit)');
+      playing=false;return;
+    }
+    const cur=nodes.find(n=>n.dataset.id===seq[i]);
+    cur.classList.add('pulse');
+    const e=edgeSeq[seq[i]];
+    if(e){const p=document.querySelector(`[data-e="${e}"]`);p.classList.add('lit');p.setAttribute('marker-end','url(#arrlit)');}
+    i++; setTimeout(step,620);
+  };
+  step();
+}
+
+nodes.forEach(n=>n.onclick=()=>showComponent(n.dataset.id));
+$('#playBtn').onclick=playHappyPath;
+$('#resetBtn').onclick=()=>{if(!playing)clearState();};
+renderSigs();
+
+// Tabs
+document.querySelectorAll('.tab').forEach(btn=>{
+  btn.onclick=()=>{
+    document.querySelectorAll('.tab').forEach(b=>b.classList.toggle('active', b===btn));
+    const target = btn.dataset.tab;
+    document.querySelectorAll('.tab-pane').forEach(p=>p.classList.toggle('active', p.id===`tab-${target}`));
+  };
+});
+</script>
+</body>
+</html>
