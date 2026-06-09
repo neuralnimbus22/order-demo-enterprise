@@ -1,7 +1,7 @@
 name: Build & Push Images (multi-arch)
 
-# Builds the four service images for linux/amd64 and linux/arm64 and pushes
-# them to GHCR under ghcr.io/neuralnimbus22/order-demo-<service>:latest.
+# Builds the service images for linux/amd64 and linux/arm64 and pushes them to
+# GHCR under ghcr.io/neuralnimbus22/order-demo-<service>:latest.
 # Multi-arch is required so the same tag works on Docker Desktop (typically
 # arm64 on Apple Silicon) and on GKE (typically amd64 nodes).
 
@@ -23,7 +23,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        service: [auth, order, payment, inventory]
+        service: [auth, order, payment, inventory, product-catalog]
 
     steps:
       - name: Checkout
