@@ -12,8 +12,12 @@ All components run in the `order-demo` namespace. Image pattern: `ghcr.io/neural
 auth-service ──┐
                │ (Bearer token authorize)
 order-service ─┤── publishes ──► Kafka: order-placed ──────┐
-               │                                            ├──► inventory-service ──► Redis cache ──► Postgres
-payment-service ── publishes ──► Kafka: payment-confirmed ─┘
+       │       │                                            ├──► inventory-service ──► Redis cache ──► Postgres
+       │ (optional sku validation)                          │
+       ▼                                                    │
+product-catalog                                             │
+                                                            │
+payment-service ── publishes ──► Kafka: payment-confirmed ──┘
 ```
 
 | Component | In-cluster address | Manifest |
@@ -22,6 +26,7 @@ payment-service ── publishes ──► Kafka: payment-confirmed ─┘
 | order | `order.order-demo.svc.cluster.local:3002` | `k8s/order.yaml` |
 | inventory | `inventory.order-demo.svc.cluster.local:3003` | `k8s/inventory.yaml` |
 | payment | `payment.order-demo.svc.cluster.local:3004` | `k8s/payment.yaml` |
+| product-catalog | `product-catalog.order-demo.svc.cluster.local:3005` | `k8s/product-catalog.yaml` |
 | kafka | `kafka.order-demo.svc.cluster.local:9092` | `kafka/kafka.yaml` |
 | redis | `redis.order-demo.svc.cluster.local:6379` | `k8s/redis.yaml` |
 | db (postgres) | `db.order-demo.svc.cluster.local:5432` | `k8s/db.yaml` |
@@ -83,6 +88,7 @@ payment-service ── publishes ──► Kafka: payment-confirmed ─┘
 | `PORT` | `3002` | listen port |
 | `AUTH_URL` | `http://localhost:3001` | base URL for /authorize call |
 | `AUTH_TOKEN` | `demo-token-good` | token sent to auth (Bearer + body) |
+| `CATALOG_URL` | `http://localhost:3005` | base URL for the product-catalog sku-validation call (only used when `sku` is supplied) |
 | `KAFKA_BROKERS` | `localhost:9092` | comma-separated brokers |
 | `KAFKA_TOPIC` | `order-placed` | producer topic |
 
@@ -91,14 +97,16 @@ payment-service ── publishes ──► Kafka: payment-confirmed ─┘
 | Method | Path | Body | Response |
 |---|---|---|---|
 | GET | `/health` | — | `200 {"status":"ok"}` |
-| POST | `/orders` | `{"id":"<string>","item":"<string>","qty":<int>}` | `201 {"id":"...","item":"...","qty":N,"status":"placed"}` on success · `400 {"error":"id and item are required"}` on invalid body · **`502 {"error":"upstream dependency unavailable"}`** on **any** auth failure (DOWN/REJECT/DEGRADED-timeout) — opaque on purpose |
+| POST | `/orders` | `{"id":"<string>","item":"<string>","qty":<int>,"sku":"<string>"?}` | `201 {"id":"...","item":"...","qty":N,"status":"placed","sku":"..."?}` on success — `sku` appears in the response only if it was in the request · `400 {"error":"id is required"}` if `id` missing · `400 {"error":"id and item are required"}` if both `item` and `sku` missing · `404 {"error":"unknown product","sku":"..."}` if catalog reports an unknown sku · **`502 {"error":"upstream dependency unavailable"}`** on **any** auth or catalog failure (DOWN/REJECT/DEGRADED-timeout / catalog-down / catalog-non-2xx) — opaque on purpose |
 
 ### Internal contract
 
 `POST /orders` does (in this order, no fallback):
-1. `fetch(${AUTH_URL}/authorize, { Authorization: Bearer ${AUTH_TOKEN}, body: {orderId, token} }, signal: AbortSignal.timeout(2000))`
-2. If anything fails in step 1 (network error, non-2xx, `authorized!==true`) → 502 opaque, no Kafka publish.
-3. Only on success: `producer.send({topic:'order-placed', messages:[{key:id, value: JSON}]})`.
+1. **Body validation.** `id` always required. `item` required UNLESS `sku` is supplied (then `item` is filled from the catalog's product name).
+2. **OPTIONAL catalog step (Phase 1b).** If `sku` is in the body: `fetch(${CATALOG_URL}/products/:sku, signal: AbortSignal.timeout(2000))`. 404 → 404 unknown product; non-2xx / network / bad body → 502 opaque (no Kafka publish). On 200 success, fill `item = product.name` if `item` wasn't supplied. **If `sku` is absent the catalog is not called at all.** This is the backward-compatibility property: the no-sku path is byte-identical to the pre-1b behavior.
+3. `fetch(${AUTH_URL}/authorize, { Authorization: Bearer ${AUTH_TOKEN}, body: {orderId, token} }, signal: AbortSignal.timeout(2000))`.
+4. If anything fails in step 3 (network error, non-2xx, `authorized!==true`) → 502 opaque, no Kafka publish.
+5. Only on success: `producer.send({topic:'order-placed', messages:[{key:id, value: JSON}]})`. The Kafka payload includes `sku` only when it was supplied — inventory ignores unknown fields, so this is forward-compatible.
 
 ### Failure modes induced via order
 
@@ -167,6 +175,67 @@ Applied automatically by `scripts/deploy.sh` as part of `kubectl apply -f k8s/`.
 - **Deps:** `tests/payment/requirements.txt`
 - **Env:** `PAYMENT_URL` (default `http://localhost:3004`)
 - **Run:** `PAYMENT_URL=http://localhost:3004 pytest tests/payment/test_payment.py -v`
+
+---
+
+## product-catalog service (Phase 1b — new)
+
+**Source:** `services/product-catalog/server.js` · **Port:** `3005`
+
+A read-only product catalog. Backs order-service's optional `sku` validation. Not on any Kafka hot path; not part of fulfillment. Catalog `stock` is display data only — inventory's `stock` table remains the source of truth for fulfillment.
+
+### Data-store decision (recorded here)
+
+**Same Postgres instance (`db:5432`), same `inventory` database, NEW `products` table.** Same DB connection settings inventory uses (`DB_HOST`/`DB_PORT`/`DB_USER`/`DB_PASSWORD`/`DB_NAME` — all defaults match k8s/db.yaml's `POSTGRES_USER=inventory` / `POSTGRES_PASSWORD=inventory` / `POSTGRES_DB=inventory`).
+
+**Why same DB, separate table** (vs a separate `catalog` database in the same Postgres instance):
+- **Simplest.** Zero changes to `db.yaml`; the `inventory` database already exists from the Postgres pod's env vars. A separate `catalog` database would require an init container running `psql -c 'CREATE DATABASE catalog'`, or a postgres init-script mounted at `/docker-entrypoint-initdb.d`, or in-app `CREATE DATABASE` logic (Postgres doesn't allow CREATE DATABASE IF NOT EXISTS in a single statement and requires connecting to the maintenance DB first). All add moving parts for no demo benefit.
+- **Clean table separation.** `products` and `stock` are unambiguous; the two tables never share a name. Postgres-level isolation isn't needed for a demo.
+- **Matches the existing connect pattern verbatim** — product-catalog's server.js uses the same env-var set and pool wiring as inventory; only the table definition differs.
+
+Recorded trade-off: both services have read/write access to each other's tables through a single shared credential. For this demo, acceptable. For production you'd want separate database users or a `catalog` schema with restricted GRANTs.
+
+### Env vars
+
+| Var | Default | Purpose |
+|---|---|---|
+| `PORT` | `3005` | listen port |
+| `DB_HOST` / `DB_PORT` / `DB_USER` / `DB_PASSWORD` / `DB_NAME` | `localhost` / `5432` / `inventory` / `inventory` / `inventory` | Postgres connection — same set inventory uses |
+| `DB_POOL_MAX` | `4` | pg pool size (slightly larger than inventory's 2 — catalog has no pool-exhaustion demo and serves a higher read mix) |
+| `DB_TIMEOUT_MS` | `2000` | pg `connectionTimeoutMillis` |
+
+### Schema + seed (auto-created on startup)
+
+```sql
+CREATE TABLE IF NOT EXISTS products (
+  id          TEXT PRIMARY KEY,
+  name        TEXT NOT NULL,
+  category    TEXT NOT NULL,
+  price       NUMERIC(10,2) NOT NULL,
+  description TEXT,
+  stock       INTEGER NOT NULL DEFAULT 0
+);
+```
+
+`initSchemaAndSeed()` mirrors inventory's retry-on-boot pattern (30 attempts × 1 s sleep). Seeds 20 generic retail products via `INSERT … ON CONFLICT (id) DO NOTHING`, so re-runs / pod restarts don't overwrite existing rows.
+
+### Endpoints
+
+| Method | Path | Body | Response |
+|---|---|---|---|
+| GET | `/health` | — | `200 {"status":"ok"}` |
+| GET | `/products` | — | `200 [{id,name,category,price,description,stock}, …]` |
+| GET | `/products/:id` | — | `200 {id,name,category,price,description,stock}` · `404 {"error":"unknown product","sku":"..."}` |
+
+`:id` IS the sku — the same key inventory's `stock` table uses.
+
+### Test
+
+- **File:** `tests/product-catalog/test_product_catalog.py` (pytest)
+- **Deps:** `tests/product-catalog/requirements.txt`
+- **Env:** `PRODUCT_CATALOG_URL` (default `http://localhost:3005`)
+- **Run:** `PRODUCT_CATALOG_URL=http://localhost:3005 pytest tests/product-catalog/test_product_catalog.py -v`
+- **Wiring:** **Not** in `ci-tests.yml`, **not** in any TestKube workflow. Lives in its folder for any orchestrator to pick up; pipeline wiring deferred on purpose.
 
 ---
 
@@ -333,9 +402,10 @@ Two GitHub Actions workflows live in `.github/workflows/`. Both target the live 
 ### `build-images.yml` — multi-arch image builds → GHCR
 - **Triggers:** push to `main` (filtered to `services/**` or this workflow file) and tags matching `v*`.
 - **Permissions:** `contents: read`, `packages: write`.
-- **Strategy:** matrix over `[auth, order, payment, inventory]`, `fail-fast: false`, per-service GHA cache scope.
+- **Strategy:** matrix over `[auth, order, payment, inventory, product-catalog]`, `fail-fast: false`, per-service GHA cache scope.
 - **Steps:** checkout → GHCR login (`github.actor` / `secrets.GITHUB_TOKEN`) → setup QEMU → setup Buildx → `docker/build-push-action` with `platforms: linux/amd64,linux/arm64`, `push: true`, tag `ghcr.io/neuralnimbus22/order-demo-<service>:latest`.
 - **Why multi-arch:** the same `:latest` tag must work on Apple Silicon developer machines (arm64) and on GKE / cloud nodes (amd64).
+- **Note:** adding a new service is a one-line matrix change. Forgetting it → pod schedules but `ImagePullBackOff` on the cluster because the image never builds/pushes.
 
 ### `ci-tests.yml` — sequential service tests
 - **Triggers:** push to `main`.

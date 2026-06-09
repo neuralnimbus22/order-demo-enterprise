@@ -29,6 +29,8 @@ spec:
               value: http://auth.order-demo.svc.cluster.local:3001
             - name: AUTH_TOKEN
               value: demo-token-good
+            - name: CATALOG_URL
+              value: http://product-catalog.order-demo.svc.cluster.local:3005
             - name: KAFKA_BROKERS
               value: kafka.order-demo.svc.cluster.local:9092
             - name: KAFKA_TOPIC

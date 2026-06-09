@@ -1,23 +1,29 @@
 # CLAUDE.md — order-demo-enterprise
 
 ## What this is
-A four-service Kubernetes-native demo whose purpose is to make **upstream root-cause confirmation** visible end to end across a realistic enterprise topology (auth, an order branch and a payment branch converging in Kafka, a downstream consumer with a Redis read-through cache backed by Postgres). An orchestrator (built **outside this repo**, in TestKube) walks back along the real dependency chain and confirms which boundary actually broke. The application here is deliberately decoupled from how it gets tested so the orchestration layer can be reasoned about on its own. See `ARCHITECTURE.md` for the topology of record and `IMPLEMENTATION.md` for the as-built endpoint reference.
+A five-service Kubernetes-native demo whose purpose is to make **upstream root-cause confirmation** visible end to end across a realistic enterprise topology (auth, an order branch and a payment branch converging in Kafka, a downstream consumer with a Redis read-through cache backed by Postgres, plus a read-only product catalog for optional sku validation). An orchestrator (built **outside this repo**, in TestKube) walks back along the real dependency chain and confirms which boundary actually broke. The application here is deliberately decoupled from how it gets tested so the orchestration layer can be reasoned about on its own. See `ARCHITECTURE.md` for the topology of record and `IMPLEMENTATION.md` for the as-built endpoint reference.
 
 ## Architecture
 ```
 auth-service ──┐
                │ (Bearer-token authorize)
 order-service ─┤── publishes ──► Kafka: order-placed ──────┐
-               │                                            ├──► inventory-service ──► Redis cache ──► Postgres
-payment-service ── publishes ──► Kafka: payment-confirmed ─┘    (convergence + symptom point)
+       │       │                                            ├──► inventory-service ──► Redis cache ──► Postgres
+       │  (optional sku validation)                         │
+       ▼                                                    │
+product-catalog                                             │
+                                                            │
+payment-service ── publishes ──► Kafka: payment-confirmed ──┘    (convergence + symptom point)
 ```
 **Failure flows down. The deepest upstream break is the true cause.**
-- Four services, all Node.js + Express. order, payment, inventory use `kafkajs`. inventory also uses `ioredis` + `pg`. auth is pure HTTP.
+- Five services, all Node.js + Express. order, payment, inventory use `kafkajs`. inventory also uses `ioredis` + `pg`. product-catalog uses `pg`. auth is pure HTTP.
 - Two Kafka topics — `order-placed` (produced by order), `payment-confirmed` (produced by payment). Kafka runs single-node KRaft (no Zookeeper) inside the cluster.
+- One Postgres (`db:5432`, database `inventory`) hosting two cleanly separate tables: `stock` (inventory's source of truth) and `products` (product-catalog's seeded catalog).
 - All in namespace **`order-demo`**.
 
 ### Non-negotiable correctness rules (encoded in code, not in tests)
 - `order` genuinely calls `auth` over HTTP before publishing. If `auth` is unreachable / rejects / degraded-times-out, `order` returns an opaque `502 {"error":"upstream dependency unavailable"}` and **never** calls `producer.send`. No fallback path.
+- `order`'s catalog call is **optional and additive**. If `sku` is in the body, order calls `product-catalog`; unknown sku → 404, catalog unreachable → opaque 502 (same shape as auth-side failures). If `sku` is absent the catalog is not called at all — the no-sku path is byte-identical to the pre-catalog behavior.
 - `payment` is independent of `auth` and `order`. It publishes `payment-confirmed` directly.
 - `inventory` only marks an id as **fulfilled** once it has received BOTH `order-placed` AND `payment-confirmed` for that id. `/processed/:id` reports the order-side arrival; `/fulfilled/:id` reports convergence and what it's still `waitingFor`.
 - `inventory` checks cache vs source-of-truth on `/fulfill` — a stale cache surfaces as `409 DATA_INCONSISTENCY` (not as a connectivity error). This and DB DOWN vs DB DEGRADED are distinct, documented signatures.
@@ -26,13 +32,14 @@ payment-service ── publishes ──► Kafka: payment-confirmed ─┘    (c
 | Path | Contents |
 |---|---|
 | `services/auth/server.js` | `POST /authorize` validates a Bearer token. `200 authorized` · `401 invalid_token` · `403 insufficient_scope`. Failure modes: scale to 0 (DOWN); send bad token (REJECT); `AUTH_DEGRADED_MS` env to artificially slow `/authorize` while `/health` stays fast (DEGRADED). SIGTERM handler for fast termination. |
-| `services/order/server.js` | `POST /orders {id,item,qty}` → real `fetch` to `${AUTH_URL}/authorize` with `Authorization: Bearer ${AUTH_TOKEN}` and a 2s timeout → only on success calls `producer.send` on `order-placed`. Any auth-side failure returns opaque `502`. |
+| `services/order/server.js` | `POST /orders {id,item,qty,sku?}` → if `sku` supplied, `GET ${CATALOG_URL}/products/:sku` first (404 → unknown product; catalog unreachable → opaque 502; on success fills `item` from product name if not supplied) → real `fetch` to `${AUTH_URL}/authorize` with `Authorization: Bearer ${AUTH_TOKEN}` and a 2s timeout → only on success calls `producer.send` on `order-placed`. Any auth-side failure returns opaque `502`. **No-sku path is byte-identical to pre-catalog behavior** (no catalog call). |
 | `services/payment/server.js` | `POST /payments {id,amount?}` → publishes `payment-confirmed`. Independent of auth/order. |
+| `services/product-catalog/server.js` | Read-only catalog, port 3005. Postgres-backed (same `db:5432` + `inventory` creds inventory uses; new `products` table). Auto-creates the table and seeds ~20 generic retail products on startup (idempotent `INSERT … ON CONFLICT DO NOTHING`; retries Postgres connect ~30× on boot). `GET /products` → list. `GET /products/:id` → one (404 on unknown sku). The product `id` IS the sku — same key inventory's `stock` table uses. Catalog `stock` is display data only; inventory's `stock` is source of truth for fulfillment. |
 | `services/inventory/server.js` | `kafkajs` consumer subscribed to BOTH topics (group `inventory-service`, `fromBeginning: true`). Tracks per-id arrivals in an in-process Map. `/health` (liveness only — does NOT touch DB), `/db/health`, `/processed/:id`, `/fulfilled/:id`. Stock layer: `POST /stock/seed`, `POST /cache/seed`, `POST /cache/flush`, `GET /stock/:sku`, `POST /fulfill` (cache-vs-DB check → 409 `DATA_INCONSISTENCY` on stale), `GET /consistency/check`, `POST /db/exhaust` (saturates the size-2 pg pool to demo DB DEGRADED). |
 | `services/*/Dockerfile` | All `node:20-alpine`, `npm install --omit=dev`, run as USER `node`. |
 | `kafka/kafka.yaml` | `apache/kafka:3.7.0` KRaft single-node combined mode (broker+controller), `emptyDir` storage, auto-create-topics enabled. |
 | `k8s/namespace.yaml` | Creates `order-demo`. |
-| `k8s/{auth,order,payment,inventory}.yaml` | Deployment + Service for each. Images `ghcr.io/neuralnimbus22/order-demo-{name}:latest` (public, multi-arch), `imagePullPolicy: IfNotPresent`. Auth has `terminationGracePeriodSeconds: 5`. order has CPU/memory `requests/limits` so an HPA can scale it. |
+| `k8s/{auth,order,payment,inventory,product-catalog}.yaml` | Deployment + Service for each. Images `ghcr.io/neuralnimbus22/order-demo-{name}:latest` (public, multi-arch), `imagePullPolicy: IfNotPresent`. Auth has `terminationGracePeriodSeconds: 5`. order has CPU/memory `requests/limits` so an HPA can scale it. order also has `CATALOG_URL` pointing at product-catalog. product-catalog shares the same DB env-var set as inventory. |
 | `k8s/redis.yaml` | `redis:7-alpine` — read-through cache for inventory stock lookups. Service `redis:6379`. |
 | `k8s/db.yaml` | `postgres:16-alpine` — source-of-truth for inventory's `stock` table. Service `db:5432`. Schema auto-applied by inventory on startup. |
 | `k8s/hpa.yaml` | HorizontalPodAutoscaler on `deploy/order`: min 1, max 5, target avg CPU 70%. Pairs with order's `resources` block and the k6 load test. **Requires metrics-server** — present on GKE, typically NOT on local Docker Desktop (the HPA object exists but metric reads `<unknown>` and no scaling happens). |
@@ -41,10 +48,11 @@ payment-service ── publishes ──► Kafka: payment-confirmed ─┘    (c
 | `tests/payment/test_payment.py` | pytest. Asserts `POST /payments` returns `201 confirmed`. |
 | `tests/inventory/test_inventory.py` | pytest. Places an order then polls `/processed/:id`. Verdict is "did the message arrive?" — does NOT abort on order-side errors. Failure starts with `MESSAGE NEVER ARRIVED`. |
 | `tests/inventory/test_cache_consistency.py` | pytest. Healthy cache-aside; stale cache → 409 `DATA_INCONSISTENCY`; cache-miss → fallback to DB then repopulate. |
+| `tests/product-catalog/test_product_catalog.py` | pytest. `/health`, full `/products` list (>=20 seeded), known sku, 404 on unknown. **Not wired into ci-tests.yml** — pipeline wiring deferred on purpose. |
 | `tests/load/order-load.js` | k6 load script. Ramps to 500 VUs against `POST /orders` to drive HPA scaling. SLOs: p95<800ms, failed<5%. |
-| `.github/workflows/build-images.yml` | Builds the four images multi-arch (linux/amd64 + linux/arm64) via QEMU+buildx, pushes to GHCR. Trigger filtered to `services/**` + this file. |
-| `.github/workflows/ci-tests.yml` | Runs the four service tests sequentially on the self-hosted runner against the live cluster. |
-| `scripts/deploy.sh` | **One-command bring-up.** namespace → Kafka + wait → pre-create BOTH topics (`order-placed`, `payment-confirmed`) → services + infra (auth, order, payment, inventory, redis, db) + HPA → wait for every Deployment Available → rollout-restart the kafkajs clients (order, payment, inventory) → sanity-check. Idempotent. |
+| `.github/workflows/build-images.yml` | Builds the five service images multi-arch (linux/amd64 + linux/arm64) via QEMU+buildx, pushes to GHCR. Matrix: `[auth, order, payment, inventory, product-catalog]`. Trigger filtered to `services/**` + this file. |
+| `.github/workflows/ci-tests.yml` | Runs the four original service tests sequentially on the self-hosted runner against the live cluster. (product-catalog test deliberately NOT wired in — see deferral above.) |
+| `scripts/deploy.sh` | **One-command bring-up.** namespace → Kafka + wait → pre-create BOTH topics (`order-placed`, `payment-confirmed`) → services + infra (auth, order, payment, inventory, product-catalog, redis, db) + HPA → wait for every Deployment Available → rollout-restart the kafkajs clients (order, payment, inventory — product-catalog has no Kafka client) → sanity-check. Idempotent. |
 | `scripts/break-auth.sh` | Scales auth → 0 and waits until cascade is observable (POST /orders returns 502). Typical 2–5s, capped by `WAIT_TIMEOUT_S=30`. |
 | `scripts/restore.sh` | Scales auth → 1, deletes + recreates topic, restarts inventory (wipes in-memory state), verifies with a real order, then resets topic + inventory ONCE MORE so HWM=0. |
 | `scripts/sanity-check.sh` | Per-deployment health + topic existence + topic high-water-mark. `[OK]/[WARN]/[FAIL]` markers. |
@@ -54,10 +62,11 @@ payment-service ── publishes ──► Kafka: payment-confirmed ─┘    (c
 ## How to run / deploy
 **Build images locally** (tag with the GHCR path so `IfNotPresent` uses your local build without pulling — fresh machines pull from GHCR automatically):
 ```bash
-cd services/auth      && docker build -t ghcr.io/neuralnimbus22/order-demo-auth:latest .
-cd ../order           && docker build -t ghcr.io/neuralnimbus22/order-demo-order:latest .
-cd ../payment         && docker build -t ghcr.io/neuralnimbus22/order-demo-payment:latest .
-cd ../inventory       && docker build -t ghcr.io/neuralnimbus22/order-demo-inventory:latest .
+cd services/auth            && docker build -t ghcr.io/neuralnimbus22/order-demo-auth:latest .
+cd ../order                 && docker build -t ghcr.io/neuralnimbus22/order-demo-order:latest .
+cd ../payment               && docker build -t ghcr.io/neuralnimbus22/order-demo-payment:latest .
+cd ../inventory             && docker build -t ghcr.io/neuralnimbus22/order-demo-inventory:latest .
+cd ../product-catalog       && docker build -t ghcr.io/neuralnimbus22/order-demo-product-catalog:latest .
 # Pushing to GHCR is normally done by .github/workflows/build-images.yml on merge to main.
 ```
 
@@ -65,7 +74,7 @@ cd ../inventory       && docker build -t ghcr.io/neuralnimbus22/order-demo-inven
 ```bash
 ./scripts/deploy.sh
 ```
-What it does, in order: applies `k8s/namespace.yaml` → applies `kafka/` and waits for Kafka Available → pre-creates **both** topics (`order-placed` and `payment-confirmed`) → applies `k8s/` (auth + order + payment + inventory + redis + db + the HPA) → waits for every Deployment Available (`auth`, `order`, `payment`, `inventory`, `redis`, `db`) → rollout-restarts the kafkajs clients (`order`, `payment`, `inventory`) to clear the Kafka client race → runs `scripts/sanity-check.sh`. Idempotent.
+What it does, in order: applies `k8s/namespace.yaml` → applies `kafka/` and waits for Kafka Available → pre-creates **both** topics (`order-placed` and `payment-confirmed`) → applies `k8s/` (auth + order + payment + inventory + product-catalog + redis + db + the HPA) → waits for every Deployment Available (`auth`, `order`, `payment`, `inventory`, `product-catalog`, `redis`, `db`) → rollout-restarts the kafkajs clients (`order`, `payment`, `inventory`) to clear the Kafka client race → runs `scripts/sanity-check.sh`. Idempotent.
 
 If you'd rather apply manually:
 ```bash
@@ -93,15 +102,18 @@ kubectl -n order-demo rollout restart deploy/order deploy/payment deploy/invento
 
 **Run a test standalone (port-forward first):**
 ```bash
-kubectl -n order-demo port-forward svc/auth      13001:3001 &
-kubectl -n order-demo port-forward svc/order     13002:3002 &
-kubectl -n order-demo port-forward svc/payment   13004:3004 &
-kubectl -n order-demo port-forward svc/inventory 13003:3003 &
+kubectl -n order-demo port-forward svc/auth            13001:3001 &
+kubectl -n order-demo port-forward svc/order           13002:3002 &
+kubectl -n order-demo port-forward svc/payment         13004:3004 &
+kubectl -n order-demo port-forward svc/inventory       13003:3003 &
+kubectl -n order-demo port-forward svc/product-catalog 13005:3005 &
 
 AUTH_URL=http://localhost:13001 pytest tests/auth/test_auth.py -v
 PAYMENT_URL=http://localhost:13004 pytest tests/payment/test_payment.py -v
 ORDER_URL=http://localhost:13002 INVENTORY_URL=http://localhost:13003 \
   pytest tests/inventory/ -v
+PRODUCT_CATALOG_URL=http://localhost:13005 \
+  pytest tests/product-catalog/test_product_catalog.py -v
 npx --yes newman run tests/order/order.postman_collection.json \
   --env-var baseUrl=http://localhost:13002
 ORDER_URL=http://localhost:13002 k6 run tests/load/order-load.js
