@@ -1,0 +1,70 @@
+# =============================================================================
+# pytest-auth-checks — API tests for auth-service, orchestrated by TestKube
+# =============================================================================
+# WHAT THIS PROVES IN A DEMO
+#   The team's existing pytest suite runs unchanged, inside the cluster,
+#   as an ephemeral pod — and every run lands in TestKube as a record.
+#
+# NOTE ON COMMENTS: comments live in this *file* only. Once applied,
+# Kubernetes stores the workflow as a structured object — the dashboard
+# editor will show the same spec without comments. Keep this copy in git
+# as the teaching/reference version.
+# =============================================================================
+apiVersion: testworkflows.testkube.io/v1
+kind: TestWorkflow
+metadata:
+  name: pytest-auth-checks
+  labels:
+    app: order-demo          # lets you filter every workflow for this system
+    tool: pytest             # tool label → nice grouping in the dashboard
+    suite: api
+
+spec:
+  # ---------------------------------------------------------------------------
+  # SOURCE — where the test lives.
+  # TestKube does a sparse checkout of just this path into /data/repo.
+  # The test stays in the team's repo; the workflow only *points* at it.
+  # ---------------------------------------------------------------------------
+  content:
+    git:
+      uri: https://github.com/neuralnimbus22/order-demo-enterprise
+      revision: main
+      paths:
+        - tests/auth
+
+  # ---------------------------------------------------------------------------
+  # RUNNER — what executes it.
+  # Plain python image; the same engine the team runs locally. Because this
+  # pod runs INSIDE the cluster, it reaches auth-service over the internal
+  # service DNS — no ingress, no port-forward, no exposure.
+  # ---------------------------------------------------------------------------
+  container:
+    image: python:3.12-slim
+    workingDir: /data/repo/tests/auth
+    env:
+      - name: AUTH_URL
+        # In-cluster FQDN — this address does not exist outside the cluster.
+        # That single line *is* the Kubernetes-native story.
+        value: http://auth.order-demo.svc.cluster.local:3001
+
+  # ---------------------------------------------------------------------------
+  # STEPS — how it runs.
+  # ---------------------------------------------------------------------------
+  steps:
+    - name: Install test dependencies
+      shell: pip install --quiet pytest requests
+
+    - name: Run auth API checks
+      # --junitxml is the line that matters: TestKube ingests the JUnit
+      # report, which unlocks test-case-level history in Insights
+      # (which test flaked, when, how often — not just workflow red/green).
+      shell: pytest test_auth.py -v --junitxml junit-auth.xml
+
+      # -------------------------------------------------------------------
+      # RESULTS — what comes back.
+      # Saved as artifacts on the execution: downloadable from the
+      # dashboard, kept with the run's logs and timing, forever.
+      # -------------------------------------------------------------------
+      artifacts:
+        paths:
+          - junit-auth.xml
