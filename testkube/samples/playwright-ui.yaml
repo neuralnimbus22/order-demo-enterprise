@@ -1,0 +1,62 @@
+# =============================================================================
+# playwright-ui-e2e — browser tests for the order-demo UI
+# =============================================================================
+# STATUS: STAGED — activates with the Phase 2 UI.
+#   The order-demo-ui repo (Next.js + Playwright) is in flight. This
+#   workflow is wired and ready: when the UI service deploys into the
+#   order-demo namespace, update the two PLACEHOLDER lines and run.
+#
+# WHAT THIS PROVES IN A DEMO
+#   Third team, third tool, same platform: browser e2e joins pytest and k6
+#   in one history. Playwright's HTML report rides along as an artifact —
+#   open it straight from the execution page.
+# =============================================================================
+apiVersion: testworkflows.testkube.io/v1
+kind: TestWorkflow
+metadata:
+  name: playwright-ui-e2e
+  labels:
+    app: order-demo
+    tool: playwright
+    suite: e2e
+
+spec:
+  # SOURCE — the UI repo (separate from the backend on purpose:
+  # different team, different cadence, same orchestration).
+  content:
+    git:
+      uri: https://github.com/neuralnimbus22/order-demo-ui
+      revision: main          # PLACEHOLDER — confirm branch once repo stabilizes
+
+  # RUNNER — Microsoft's official Playwright image: browsers preinstalled,
+  # so no 2-minute browser download on every run.
+  # Keep the tag in lockstep with @playwright/test in the repo's package.json.
+  container:
+    image: mcr.microsoft.com/playwright:v1.49.0-jammy
+    workingDir: /data/repo
+    env:
+      - name: BASE_URL
+        # PLACEHOLDER — the UI's in-cluster address once deployed.
+        value: http://ui.order-demo.svc.cluster.local:3000
+      - name: CI
+        value: "true"
+
+  steps:
+    - name: Install dependencies
+      # npm ci (not install): exact lockfile versions, reproducible runs.
+      shell: npm ci
+
+    - name: Run Playwright e2e
+      # junit reporter → test-case-level Insights;
+      # html reporter → the full clickable report as an artifact.
+      shell: npx playwright test --reporter=junit,html
+      env:
+        - name: PLAYWRIGHT_JUNIT_OUTPUT_NAME
+          value: junit-ui.xml
+
+      # RESULTS — report, junit, and traces/screenshots on failure.
+      artifacts:
+        paths:
+          - junit-ui.xml
+          - playwright-report/**
+          - test-results/**

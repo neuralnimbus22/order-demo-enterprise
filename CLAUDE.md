@@ -72,7 +72,7 @@ They do not share code, tokens, or a database table.
 | `scripts/restore.sh` | Scales auth → 1, deletes + recreates topic, restarts inventory (wipes in-memory state), verifies with a real order, then resets topic + inventory ONCE MORE so HWM=0. |
 | `scripts/sanity-check.sh` | Per-deployment health + topic existence + topic high-water-mark. `[OK]/[WARN]/[FAIL]` markers. |
 | `scripts/place-order.sh` | Healthy-path helper: place one order, confirm inventory processed it. |
-| `testkube/README.md` | Intentionally empty marker — TestWorkflows are built by hand outside this repo. |
+| `testkube/samples/` | Commented reference TestWorkflows for demos (pytest-auth, k6-load-sharded, playwright-ui). Production orchestration still lives outside the repo. |
 
 ## How to run / deploy
 **Build images locally** (tag with the GHCR path so `IfNotPresent` uses your local build without pulling — fresh machines pull from GHCR automatically):
@@ -152,7 +152,7 @@ ORDER_URL=http://localhost:13002 k6 run tests/load/order-load.js
 - **DB pool is intentionally tiny** (`DB_POOL_MAX=2`) so `/db/exhaust` can reliably saturate it for the DB DEGRADED demo.
 - **DATA_INCONSISTENCY is a distinct signature** — all services `/health` 200, but `/fulfill` returns `409` with `cacheQty` and `dbQty` reported. Cache TTL is 60s, so the poison window is finite; re-seed via `/cache/seed` to extend.
 - **Scripts use port-forwards internally** — they assume a working `kubectl` and proper cluster context. No external load balancer needed.
-- **No TestKube content in this repo.** `testkube/` is intentionally empty; orchestration lives outside.
+- **`testkube/samples/` holds commented reference TestWorkflows for demos**; production orchestration still lives outside the repo.
 
 ## Common tasks
 - **Modify a service** → edit `services/<name>/server.js`, rebuild (`docker build -t ghcr.io/neuralnimbus22/order-demo-<name>:latest .`), `kubectl -n order-demo rollout restart deploy/<name>`. To publish for other clusters: merge to main and let `build-images.yml` push.

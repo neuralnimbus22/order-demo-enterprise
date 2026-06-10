@@ -1,0 +1,75 @@
+# =============================================================================
+# k6-load-sharded — distributed load test with native parallel fan-out
+# =============================================================================
+# WHAT THIS PROVES IN A DEMO
+#   One workflow, three workers: TestKube fans the load generator out to
+#   one pod per worker — `kubectl get pods` during the run shows them appear
+#   and disappear. Parallelism is a YAML field, not infrastructure you build.
+#
+# THE LOAD PROFILE — read this before resizing anything:
+#   tests/load/order-load.js defines its own ramp (0→500 VUs over 3m) to
+#   drive the order-service HPA. k6 CLI flags take precedence over the
+#   script, so the --stage flags below OVERRIDE that profile to a demo-safe
+#   ~20 VUs per worker (≈60 total across 3 workers).
+#   ▶ For the full HPA-scaling show: delete the --stage flags and watch
+#     order-service scale 1→5 replicas. Mind the blast radius.
+# =============================================================================
+apiVersion: testworkflows.testkube.io/v1
+kind: TestWorkflow
+metadata:
+  name: k6-load-sharded
+  labels:
+    app: order-demo
+    tool: k6
+    suite: load
+
+spec:
+  # SOURCE — sparse checkout of the load script only.
+  content:
+    git:
+      uri: https://github.com/neuralnimbus22/order-demo-enterprise
+      revision: main
+      paths:
+        - tests/load
+
+  steps:
+    - name: Run k6 across 3 parallel workers
+      # -----------------------------------------------------------------
+      # THE FAN-OUT. `count: 3` = three pods, scheduled by Kubernetes,
+      # each running the same step. This block is the sharding /
+      # native-parallelism differentiator, in six lines.
+      # -----------------------------------------------------------------
+      parallel:
+        count: 3
+
+        # Each worker pod gets its own copy of the checked-out content.
+        transfer:
+          - from: /data/repo
+
+        container:
+          # k6's own official image — the engine the perf team already uses.
+          image: grafana/k6:0.49.0
+          workingDir: /data/repo/tests/load
+          env:
+            - name: ORDER_URL
+              # In-cluster FQDN: workers hit the service pod-to-pod.
+              value: http://order.order-demo.svc.cluster.local:3002
+            - name: WORKER
+              # Shard identity from TestKube's expression engine —
+              # used below to tag metrics per worker.
+              value: "{{ index }}"
+
+        run:
+          # --stage flags = demo-sized override (see header note).
+          # --tag worker= lets you tell the shards apart in the output.
+          # --summary-export saves per-worker numbers as an artifact.
+          shell: |
+            k6 run order-load.js \
+              --stage 20s:20 --stage 60s:20 --stage 10s:0 \
+              --tag worker=${WORKER} \
+              --summary-export k6-summary-worker-${WORKER}.json
+
+        # RESULTS — one summary per worker, attached to the execution.
+        artifacts:
+          paths:
+            - k6-summary-worker-*.json
