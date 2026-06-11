@@ -47,7 +47,7 @@ The application + the raw plumbing that any test orchestrator can drive:
 | `k8s/` | Per-service Deployment + Service manifests + namespace, `redis.yaml` and `db.yaml` for the backing infra, and `hpa.yaml` (HPA on order-service for the load-test scaling demo) |
 | `tests/auth`, `tests/order`, `tests/payment`, `tests/inventory`, `tests/product-catalog`, `tests/user-session` | Per-service test files (pytest, Newman, pytest, pytest, pytest, pytest) — runnable standalone. `tests/product-catalog` and `tests/user-session` are not wired into ci-tests.yml yet (deferred). |
 | `tests/load` | k6 load test that drives `POST /orders` hard enough to trigger HPA scaling on order-service |
-| `scripts/` | `deploy.sh` (one-command bring-up), `break-auth.sh`, `restore.sh`, `sanity-check.sh`, `place-order.sh` |
+| `scripts/` | `deploy.sh` (one-command bring-up), `break-auth.sh`, `restore.sh`, `sanity-check.sh`, `place-order.sh`, `smoke-test.sh` (read-only health + functional check of all six services and the infra) |
 | `.github/workflows/` | `build-images.yml` (multi-arch image builds → GHCR) and `ci-tests.yml` (sequential test runs) |
 | `testkube/` | Intentionally empty — see `testkube/README.md` |
 

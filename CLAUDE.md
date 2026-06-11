@@ -72,6 +72,7 @@ They do not share code, tokens, or a database table.
 | `scripts/restore.sh` | Scales auth → 1, deletes + recreates topic, restarts inventory (wipes in-memory state), verifies with a real order, then resets topic + inventory ONCE MORE so HWM=0. |
 | `scripts/sanity-check.sh` | Per-deployment health + topic existence + topic high-water-mark. `[OK]/[WARN]/[FAIL]` markers. |
 | `scripts/place-order.sh` | Healthy-path helper: place one order, confirm inventory processed it. |
+| `scripts/smoke-test.sh` | **Read-only smoke test of the live backend.** Deployments healthy, both Kafka topics exist, Redis PING, `/health` on all six services, inventory `/db/health` (doubles as the Postgres probe), product-catalog `/products` non-empty, and a real user-session register → login → validate round-trip with a unique throwaway email. Changes no cluster state (no scaling/deploys/failure injection); exits non-zero on any failure so it can gate a pipeline. |
 | `testkube/samples/` | Commented reference TestWorkflows for demos (pytest-auth, k6-load-sharded, playwright-ui). Production orchestration still lives outside the repo. |
 
 ## How to run / deploy
