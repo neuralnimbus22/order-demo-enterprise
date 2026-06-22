@@ -1,3 +1,18 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: db-data
+  namespace: order-demo
+  labels:
+    app: db
+spec:
+  accessModes:
+    - ReadWriteOnce
+  # storageClassName intentionally unset → GKE uses the default provisioner.
+  resources:
+    requests:
+      storage: 5Gi
+---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -24,6 +39,12 @@ spec:
           ports:
             - name: postgres
               containerPort: 5432
+          volumeMounts:
+            - name: db-data
+              mountPath: /var/lib/postgresql/data
+              # subPath so Postgres initializes into a clean child dir rather
+              # than the (often non-empty, e.g. lost+found) volume root.
+              subPath: pgdata
           env:
             - name: POSTGRES_USER
               value: inventory
@@ -43,6 +64,10 @@ spec:
             initialDelaySeconds: 15
             periodSeconds: 15
             failureThreshold: 3
+      volumes:
+        - name: db-data
+          persistentVolumeClaim:
+            claimName: db-data
 ---
 apiVersion: v1
 kind: Service
