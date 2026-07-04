@@ -1,0 +1,63 @@
+# Kubernetes Services for the hosts the Istio config below routes to.
+# Included so `istioctl analyze --use-kube=false` can resolve destination hosts
+# offline (no cluster). Ports are named `http` to satisfy Istio's port-naming
+# convention (avoids IST0118).
+apiVersion: v1
+kind: Service
+metadata:
+  name: order-demo-ui
+  namespace: order-demo
+  labels:
+    app: order-demo-ui
+spec:
+  selector:
+    app: order-demo-ui
+  ports:
+    - name: http
+      port: 3000
+      targetPort: 3000
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: order
+  namespace: order-demo
+  labels:
+    app: order
+spec:
+  selector:
+    app: order
+  ports:
+    - name: http
+      port: 3002
+      targetPort: 3002
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: payment
+  namespace: order-demo
+  labels:
+    app: payment
+spec:
+  selector:
+    app: payment
+  ports:
+    - name: http
+      port: 3004
+      targetPort: 3004
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: product-catalog
+  namespace: order-demo
+  labels:
+    app: product-catalog
+spec:
+  selector:
+    app: product-catalog
+  ports:
+    - name: http
+      port: 3005
+      targetPort: 3005

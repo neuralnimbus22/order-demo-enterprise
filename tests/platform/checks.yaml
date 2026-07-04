@@ -1,0 +1,250 @@
+# Platform checks manifest — infrastructure-level health for the order-demo
+# stack. Every check is a data entry; runner.sh is the only logic.
+#
+# Each entry:
+#   name       unique id
+#   tool       kubectl | istioctl
+#   command    args passed to the tool (NAMESPACE expands from env; default below)
+#   assert     how to judge the output:
+#                type: jq        expr: <jq boolean; pass when true>   [evidence: <jq>]
+#                type: grep      pattern: <regex>  mode: absent|present
+#                type: grep-all  patterns: [<regex>, ...]  mode: present  (all must appear)
+#                type: exit-code                     (pass when command exits 0)
+#   severity   fail (blocks; non-zero runner exit) | warn (never blocks)
+#   tags       comma list, used by --tags filtering
+#   rbac       verbs + resources this check needs, and scope (namespaced|cluster|none).
+#              The runner does NOT use this — it documents the Role in
+#              rbac/platform-checks-readonly.yaml.
+
+version: 1
+
+defaults:
+  # Overridable by the NAMESPACE env var (e.g. NAMESPACE=staging ./runner.sh).
+  namespace: order-demo
+  istio_version: 1.24.2
+
+checks:
+  # ---- node / cluster -----------------------------------------------------
+  - name: nodes-ready
+    tool: kubectl
+    command: 'get nodes -o json'
+    assert:
+      type: jq
+      expr: 'all(.items[]; any(.status.conditions[]; .type=="Ready" and .status=="True"))'
+      evidence: '[.items[] | select(any(.status.conditions[]; .type=="Ready" and .status=="True") | not) | .metadata.name]'
+    severity: fail
+    tags: node
+    rbac:
+      verbs: [get, list]
+      resources: [nodes]
+      scope: cluster
+
+  # ---- workloads ----------------------------------------------------------
+  - name: deploys-available
+    tool: kubectl
+    command: 'get deployments -n "$NAMESPACE" -o json'
+    assert:
+      type: jq
+      expr: 'all(.items[]; (.status.readyReplicas // 0) == (.spec.replicas // 0))'
+      evidence: '[.items[] | select((.status.readyReplicas // 0) != (.spec.replicas // 0)) | {name: .metadata.name, ready: (.status.readyReplicas // 0), desired: (.spec.replicas // 0)}]'
+    severity: fail
+    tags: workload
+    rbac:
+      verbs: [get, list]
+      resources: [deployments]
+      scope: namespaced
+
+  - name: pods-healthy
+    tool: kubectl
+    command: 'get pods -n "$NAMESPACE"'
+    assert:
+      type: grep
+      pattern: 'CrashLoopBackOff|ImagePullBackOff|ErrImagePull|CreateContainerError'
+      mode: absent
+    severity: fail
+    tags: workload
+    rbac:
+      verbs: [get, list]
+      resources: [pods]
+      scope: namespaced
+
+  - name: pods-pending
+    tool: kubectl
+    command: 'get pods -n "$NAMESPACE" -o json'
+    assert:
+      type: jq
+      expr: '[.items[] | select(.status.phase=="Pending") | select((now - (.metadata.creationTimestamp | fromdateiso8601)) > 300)] | length == 0'
+      evidence: '[.items[] | select(.status.phase=="Pending") | select((now - (.metadata.creationTimestamp | fromdateiso8601)) > 300) | .metadata.name]'
+    severity: fail
+    tags: workload,capacity
+    rbac:
+      verbs: [get, list]
+      resources: [pods]
+      scope: namespaced
+
+  - name: restarts-threshold
+    tool: kubectl
+    command: 'get pods -n "$NAMESPACE" -o json'
+    # Heuristic proxy for ">3 restarts/hr": a container with restartCount > 3
+    # whose most recent restart was within the last hour.
+    assert:
+      type: jq
+      expr: '[.items[].status.containerStatuses[]? | select(.restartCount > 3) | select(((.lastState.terminated.finishedAt // "1970-01-01T00:00:00Z") | fromdateiso8601) > (now - 3600))] | length == 0'
+      evidence: '[.items[] | .metadata.name as $p | .status.containerStatuses[]? | select(.restartCount > 3) | {pod: $p, container: .name, restarts: .restartCount}]'
+    severity: warn
+    tags: workload
+    rbac:
+      verbs: [get, list]
+      resources: [pods]
+      scope: namespaced
+
+  # ---- network ------------------------------------------------------------
+  - name: endpoints-ready
+    tool: kubectl
+    command: 'get endpoints -n "$NAMESPACE" -o json'
+    assert:
+      type: jq
+      expr: 'all(.items[]; ([.subsets[]?.addresses[]?] | length) > 0)'
+      evidence: '[.items[] | select(([.subsets[]?.addresses[]?] | length) == 0) | .metadata.name]'
+    severity: fail
+    tags: network
+    rbac:
+      verbs: [get, list]
+      resources: [endpoints]
+      scope: namespaced
+
+  - name: selector-match
+    tool: kubectl
+    command: 'get services,pods -n "$NAMESPACE" -o json'
+    # Every Service with a selector must match at least one pod.
+    assert:
+      type: jq
+      expr: '. as $r | ([$r.items[] | select(.kind=="Service") | select(.spec.selector != null and (.spec.selector | length > 0))]) as $svcs | ([$r.items[] | select(.kind=="Pod")]) as $pods | ($svcs | all(. as $s | ($pods | any(.metadata.labels as $pl | ($s.spec.selector | to_entries | all(. as $e | ($pl[$e.key] == $e.value)))))))'
+      evidence: '. as $r | ([$r.items[] | select(.kind=="Pod")]) as $pods | [$r.items[] | select(.kind=="Service") | select(.spec.selector != null and (.spec.selector | length > 0)) | . as $s | select(($pods | any(.metadata.labels as $pl | ($s.spec.selector | to_entries | all(. as $e | ($pl[$e.key] == $e.value))))) | not) | $s.metadata.name]'
+    severity: fail
+    tags: network
+    rbac:
+      verbs: [get, list]
+      resources: [services, pods]
+      scope: namespaced
+
+  # ---- events -------------------------------------------------------------
+  - name: events-warnings
+    tool: kubectl
+    command: 'get events -n "$NAMESPACE" -o json'
+    assert:
+      type: jq
+      expr: '[.items[] | select(.type=="Warning") | select(((.lastTimestamp // .eventTime // .metadata.creationTimestamp) | fromdateiso8601) > (now - 900))] | length == 0'
+      evidence: '[.items[] | select(.type=="Warning") | select(((.lastTimestamp // .eventTime // .metadata.creationTimestamp) | fromdateiso8601) > (now - 900)) | {obj: .involvedObject.name, reason: .reason, msg: .message}]'
+    severity: warn
+    tags: events
+    rbac:
+      verbs: [get, list]
+      resources: [events]
+      scope: namespaced
+
+  # ---- autoscaling --------------------------------------------------------
+  - name: hpa-sane
+    tool: kubectl
+    command: 'get hpa -n "$NAMESPACE" -o json'
+    # HPA present, current <= max, and not currently pinned at max (proxy for
+    # "pinned at max > 30m" — the runner has no history, so it flags at-max now).
+    assert:
+      type: jq
+      expr: '(.items | length > 0) and all(.items[]; (.status.currentReplicas // 0) < .spec.maxReplicas)'
+      evidence: '[.items[] | select((.status.currentReplicas // 0) >= .spec.maxReplicas) | {name: .metadata.name, current: (.status.currentReplicas // 0), max: .spec.maxReplicas}]'
+    severity: warn
+    tags: autoscaling
+    rbac:
+      verbs: [get, list]
+      resources: [horizontalpodautoscalers]
+      scope: namespaced
+
+  # ---- storage ------------------------------------------------------------
+  - name: pvc-bound
+    tool: kubectl
+    command: 'get pvc -n "$NAMESPACE" -o json'
+    assert:
+      type: jq
+      expr: 'all(.items[]; .status.phase == "Bound")'
+      evidence: '[.items[] | select(.status.phase != "Bound") | {name: .metadata.name, phase: .status.phase}]'
+    severity: fail
+    tags: storage
+    rbac:
+      verbs: [get, list]
+      resources: [persistentvolumeclaims]
+      scope: namespaced
+
+  # ---- hygiene ------------------------------------------------------------
+  - name: limits-present
+    tool: kubectl
+    command: 'get pods -n "$NAMESPACE" -o json'
+    assert:
+      type: jq
+      expr: 'all(.items[].spec.containers[]; (.resources.requests != null) and (.resources.limits != null))'
+      evidence: '[.items[] | .metadata.name as $p | .spec.containers[] | select((.resources.requests == null) or (.resources.limits == null)) | {pod: $p, container: .name}]'
+    severity: warn
+    tags: hygiene
+    rbac:
+      verbs: [get, list]
+      resources: [pods]
+      scope: namespaced
+
+  - name: pdb-coverage
+    tool: kubectl
+    command: 'get deploy,pdb -n "$NAMESPACE" -o json'
+    # Every deployment with > 1 replica should be covered by a PDB whose selector
+    # matches the deployment's pod-template labels.
+    assert:
+      type: jq
+      expr: '. as $r | ([$r.items[] | select(.kind=="Deployment") | select((.spec.replicas // 1) > 1)]) as $multi | ([$r.items[] | select(.kind=="PodDisruptionBudget")]) as $pdbs | ($multi | all(. as $d | ($pdbs | any((.spec.selector.matchLabels // {}) | to_entries | all(. as $e | ($d.spec.template.metadata.labels[$e.key] == $e.value))))))'
+      evidence: '. as $r | ([$r.items[] | select(.kind=="PodDisruptionBudget")]) as $pdbs | [$r.items[] | select(.kind=="Deployment") | select((.spec.replicas // 1) > 1) | . as $d | select(($pdbs | any((.spec.selector.matchLabels // {}) | to_entries | all(. as $e | ($d.spec.template.metadata.labels[$e.key] == $e.value)))) | not) | $d.metadata.name]'
+    severity: warn
+    tags: hygiene
+    rbac:
+      verbs: [get, list]
+      resources: [deployments, poddisruptionbudgets]
+      scope: namespaced
+
+  # ---- istio (static tier: no cluster, no mesh required) ------------------
+  - name: istio-good-clean
+    tool: istioctl
+    command: 'analyze --use-kube=false -n "$NAMESPACE" istio/manifests/good/'
+    assert:
+      type: exit-code
+    severity: fail
+    tags: istio
+    rbac:
+      verbs: []
+      resources: []
+      scope: none
+
+  - name: istio-broken-detected
+    tool: istioctl
+    command: 'analyze --use-kube=false -n "$NAMESPACE" istio/manifests/broken/'
+    # The broken manifests are demo assets kept broken on purpose; these are the
+    # codes they must surface (see the header comments in broken/*.yaml).
+    assert:
+      type: grep-all
+      patterns: ['IST0101', 'IST0132']
+      mode: present
+    severity: fail
+    tags: istio
+    rbac:
+      verbs: []
+      resources: []
+      scope: none
+
+  - name: istio-version-pinned
+    tool: istioctl
+    command: 'version --remote=false'
+    assert:
+      type: grep
+      pattern: '1\.24\.2'
+      mode: present
+    severity: warn
+    tags: istio
+    rbac:
+      verbs: []
+      resources: []
+      scope: none
