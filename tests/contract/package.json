@@ -1,0 +1,17 @@
+{
+  "name": "order-demo-contract-tests",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Broker-less Pact contract tests for order-demo-enterprise (consumer + provider verification against live services).",
+  "scripts": {
+    "test:consumer": "mocha 'consumer/**/*.test.js' --reporter mocha-multi-reporters --reporter-options configFile=reporter-consumer.json",
+    "test:provider": "mocha 'provider/**/*.test.js' --reporter mocha-multi-reporters --reporter-options configFile=reporter-provider.json",
+    "test": "npm run test:consumer && npm run test:provider"
+  },
+  "devDependencies": {
+    "@pact-foundation/pact": "^12.5.0",
+    "mocha": "^10.7.3",
+    "mocha-junit-reporter": "^2.2.1",
+    "mocha-multi-reporters": "^1.5.1"
+  }
+}

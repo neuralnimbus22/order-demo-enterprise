@@ -1,0 +1,91 @@
+{
+  "consumer": {
+    "name": "order-service"
+  },
+  "interactions": [
+    {
+      "description": "an authorization request for an order",
+      "providerStates": [
+        {
+          "name": "token demo-token-good is valid with orders:create scope"
+        }
+      ],
+      "request": {
+        "body": {
+          "orderId": "order-abc-123",
+          "token": "demo-token-good"
+        },
+        "headers": {
+          "Authorization": "Bearer demo-token-good",
+          "Content-Type": "application/json"
+        },
+        "matchingRules": {
+          "body": {
+            "$.orderId": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type"
+                }
+              ]
+            }
+          },
+          "header": {}
+        },
+        "method": "POST",
+        "path": "/authorize"
+      },
+      "response": {
+        "body": {
+          "authorized": true,
+          "scope": [
+            "orders:create"
+          ]
+        },
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "matchingRules": {
+          "body": {
+            "$.scope": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type",
+                  "min": 1
+                }
+              ]
+            }
+          },
+          "header": {
+            "Content-Type": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type"
+                }
+              ]
+            }
+          },
+          "status": {}
+        },
+        "status": 200
+      }
+    }
+  ],
+  "metadata": {
+    "pact-js": {
+      "version": "12.5.2"
+    },
+    "pactRust": {
+      "ffi": "0.4.20",
+      "models": "1.2.0"
+    },
+    "pactSpecification": {
+      "version": "3.0.0"
+    }
+  },
+  "provider": {
+    "name": "auth-service"
+  }
+}
