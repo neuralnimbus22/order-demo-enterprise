@@ -1,0 +1,72 @@
+{
+  "consumer": {
+    "name": "inventory-service"
+  },
+  "messages": [
+    {
+      "contents": {
+        "at": "2026-07-04T15:51:20.164Z",
+        "id": "order-abc-123",
+        "item": "widget",
+        "qty": 1
+      },
+      "description": "an order-placed event",
+      "matchingRules": {
+        "body": {
+          "$.at": {
+            "combine": "AND",
+            "matchers": [
+              {
+                "match": "type"
+              }
+            ]
+          },
+          "$.id": {
+            "combine": "AND",
+            "matchers": [
+              {
+                "match": "type"
+              }
+            ]
+          },
+          "$.item": {
+            "combine": "AND",
+            "matchers": [
+              {
+                "match": "type"
+              }
+            ]
+          },
+          "$.qty": {
+            "combine": "AND",
+            "matchers": [
+              {
+                "match": "integer"
+              }
+            ]
+          }
+        },
+        "metadata": {}
+      },
+      "metadata": {
+        "contentType": "application/json",
+        "kafka_topic": "order-placed"
+      }
+    }
+  ],
+  "metadata": {
+    "pact-js": {
+      "version": "12.5.2"
+    },
+    "pactRust": {
+      "ffi": "0.4.20",
+      "models": "1.2.0"
+    },
+    "pactSpecification": {
+      "version": "3.0.0"
+    }
+  },
+  "provider": {
+    "name": "order-service"
+  }
+}

@@ -1,0 +1,4 @@
+node_modules/
+target/
+# NOTE: pacts/ is deliberately NOT ignored — the generated contracts are the
+# artifact and must be committed.
