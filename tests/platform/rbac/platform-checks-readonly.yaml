@@ -1,0 +1,93 @@
+# Least-privilege RBAC for the platform checks. Grants ONLY the read verbs and
+# resources the checks in checks.yaml declare in their `rbac:` fields — nothing
+# more. This is standard Kubernetes RBAC (not a TestKube resource); it belongs
+# in the repo so a runner (human, CI, or an in-cluster job) can authenticate as
+# a scoped, read-only identity.
+#
+# Resource -> check(s):
+#   nodes                    nodes-ready                 (cluster-scoped -> ClusterRole)
+#   deployments              deploys-available, pdb-coverage
+#   pods                     pods-healthy, pods-pending, restarts-threshold,
+#                            limits-present, selector-match
+#   services                 selector-match
+#   endpoints                endpoints-ready
+#   events                   events-warnings
+#   horizontalpodautoscalers hpa-sane
+#   persistentvolumeclaims   pvc-bound
+#   poddisruptionbudgets     pdb-coverage
+#
+# The three istioctl checks run against local manifest files with
+# --use-kube=false and need NO cluster access (rbac.scope: none).
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: platform-checks
+  namespace: order-demo
+  labels:
+    app.kubernetes.io/name: platform-checks
+---
+# Namespaced read-only access in order-demo.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: platform-checks-readonly
+  namespace: order-demo
+  labels:
+    app.kubernetes.io/name: platform-checks
+rules:
+  - apiGroups: [""]
+    resources: [pods, services, endpoints, events, persistentvolumeclaims]
+    verbs: [get, list]
+  - apiGroups: [apps]
+    resources: [deployments]
+    verbs: [get, list]
+  - apiGroups: [autoscaling]
+    resources: [horizontalpodautoscalers]
+    verbs: [get, list]
+  - apiGroups: [policy]
+    resources: [poddisruptionbudgets]
+    verbs: [get, list]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: platform-checks-readonly
+  namespace: order-demo
+  labels:
+    app.kubernetes.io/name: platform-checks
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: platform-checks-readonly
+subjects:
+  - kind: ServiceAccount
+    name: platform-checks
+    namespace: order-demo
+---
+# nodes are cluster-scoped, so the one node check needs a ClusterRole.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: platform-checks-nodes-readonly
+  labels:
+    app.kubernetes.io/name: platform-checks
+rules:
+  - apiGroups: [""]
+    resources: [nodes]
+    verbs: [get, list]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: platform-checks-nodes-readonly
+  labels:
+    app.kubernetes.io/name: platform-checks
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: platform-checks-nodes-readonly
+subjects:
+  - kind: ServiceAccount
+    name: platform-checks
+    namespace: order-demo

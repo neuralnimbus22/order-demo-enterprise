@@ -1,0 +1,25 @@
+# Valid DestinationRules — the planted errors in this folder live in
+# virtual-service.yaml and services.yaml. These resolve cleanly so they do not
+# add noise to the expected-code assertion.
+apiVersion: networking.istio.io/v1
+kind: DestinationRule
+metadata:
+  name: order
+  namespace: order-demo
+spec:
+  host: order
+  trafficPolicy:
+    connectionPool:
+      http:
+        http1MaxPendingRequests: 64
+---
+apiVersion: networking.istio.io/v1
+kind: DestinationRule
+metadata:
+  name: payment
+  namespace: order-demo
+spec:
+  host: payment
+  trafficPolicy:
+    loadBalancer:
+      simple: ROUND_ROBIN

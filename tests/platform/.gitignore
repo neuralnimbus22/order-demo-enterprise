@@ -1,0 +1,3 @@
+# Generated reports and the on-demand istioctl download.
+target/
+.tools/

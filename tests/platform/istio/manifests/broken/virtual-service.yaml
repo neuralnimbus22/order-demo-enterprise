@@ -1,0 +1,38 @@
+# PLANTED ERRORS (do not "fix" — these are demo assets). Expected istioctl
+# analyze codes, confirmed offline with the pinned istioctl:
+#   1. gateways references "missing-gateway", not defined anywhere
+#        -> Error   IST0101  "Referenced gateway not found"
+#   2. the storefront route targets subset "canary" on host order-demo-ui, but
+#      no DestinationRule defines that subset
+#        -> Error   IST0101  "Referenced host+subset in destinationrule not found"
+# As a direct consequence of (1), the VirtualService host cannot be matched to
+# its (missing) gateway:
+#        -> Warning IST0132  "host ... not found in Gateway"
+# Expected distinct codes: IST0101, IST0132.
+apiVersion: networking.istio.io/v1
+kind: VirtualService
+metadata:
+  name: order-demo-ui
+  namespace: order-demo
+spec:
+  hosts:
+    - "shop.order-demo.example.com"
+  gateways:
+    - missing-gateway
+  http:
+    - name: payments-api
+      match:
+        - uri:
+            prefix: /api/payments
+      route:
+        - destination:
+            host: payment
+            port:
+              number: 3004
+    - name: storefront
+      route:
+        - destination:
+            host: order-demo-ui
+            subset: canary
+            port:
+              number: 3000

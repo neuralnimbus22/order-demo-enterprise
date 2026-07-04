@@ -1,0 +1,16 @@
+# Ingress Gateway for the storefront. Selects the standard istio ingressgateway.
+apiVersion: networking.istio.io/v1
+kind: Gateway
+metadata:
+  name: order-demo-gateway
+  namespace: order-demo
+spec:
+  selector:
+    istio: ingressgateway
+  servers:
+    - port:
+        number: 80
+        name: http
+        protocol: HTTP
+      hosts:
+        - "shop.order-demo.example.com"

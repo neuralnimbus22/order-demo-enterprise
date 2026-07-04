@@ -1,0 +1,38 @@
+# DestinationRules for the backend services the storefront talks to. Simple
+# traffic policies, no subsets — every host resolves to a Service in
+# services.yaml.
+apiVersion: networking.istio.io/v1
+kind: DestinationRule
+metadata:
+  name: order
+  namespace: order-demo
+spec:
+  host: order
+  trafficPolicy:
+    connectionPool:
+      http:
+        http1MaxPendingRequests: 64
+        maxRequestsPerConnection: 10
+---
+apiVersion: networking.istio.io/v1
+kind: DestinationRule
+metadata:
+  name: payment
+  namespace: order-demo
+spec:
+  host: payment
+  trafficPolicy:
+    connectionPool:
+      tcp:
+        maxConnections: 32
+---
+apiVersion: networking.istio.io/v1
+kind: DestinationRule
+metadata:
+  name: product-catalog
+  namespace: order-demo
+spec:
+  host: product-catalog
+  trafficPolicy:
+    loadBalancer:
+      simple: ROUND_ROBIN

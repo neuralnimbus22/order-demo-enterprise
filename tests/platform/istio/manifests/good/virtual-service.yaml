@@ -1,0 +1,38 @@
+# Storefront routing: browser traffic through the gateway lands on order-demo-ui;
+# /api/orders and /api/payments are routed to the backend services. Every
+# destination host resolves to a Service in services.yaml.
+apiVersion: networking.istio.io/v1
+kind: VirtualService
+metadata:
+  name: order-demo-ui
+  namespace: order-demo
+spec:
+  hosts:
+    - "shop.order-demo.example.com"
+  gateways:
+    - order-demo-gateway
+  http:
+    - name: orders-api
+      match:
+        - uri:
+            prefix: /api/orders
+      route:
+        - destination:
+            host: order
+            port:
+              number: 3002
+    - name: payments-api
+      match:
+        - uri:
+            prefix: /api/payments
+      route:
+        - destination:
+            host: payment
+            port:
+              number: 3004
+    - name: storefront
+      route:
+        - destination:
+            host: order-demo-ui
+            port:
+              number: 3000
