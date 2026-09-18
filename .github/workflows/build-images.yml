@@ -1,7 +1,9 @@
 name: Build & Push Images (multi-arch)
 
 # Builds the service images for linux/amd64 and linux/arm64 and pushes them to
-# GHCR under ghcr.io/neuralnimbus22/order-demo-<service>:latest.
+# GHCR under ghcr.io/neuralnimbus22/order-demo-<service> with two tags:
+#   :latest        - moving tag, used by the standing manifests in k8s/
+#   :<short sha>   - immutable tag per commit, used by the Jenkins deploy
 # Multi-arch is required so the same tag works on Docker Desktop (typically
 # arm64 on Apple Silicon) and on GKE (typically amd64 nodes).
 
@@ -42,6 +44,9 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
+      - name: Short SHA
+        run: echo "SHORT_SHA=${GITHUB_SHA::7}" >> "$GITHUB_ENV"
+
       - name: Build & push ${{ matrix.service }}
         uses: docker/build-push-action@v6
         with:
@@ -49,6 +54,8 @@ jobs:
           file: services/${{ matrix.service }}/Dockerfile
           platforms: linux/amd64,linux/arm64
           push: true
-          tags: ghcr.io/neuralnimbus22/order-demo-${{ matrix.service }}:latest
+          tags: |
+            ghcr.io/neuralnimbus22/order-demo-${{ matrix.service }}:latest
+            ghcr.io/neuralnimbus22/order-demo-${{ matrix.service }}:${{ env.SHORT_SHA }}
           cache-from: type=gha,scope=${{ matrix.service }}
           cache-to: type=gha,mode=max,scope=${{ matrix.service }}
