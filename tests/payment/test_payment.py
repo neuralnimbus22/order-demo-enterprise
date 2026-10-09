@@ -6,9 +6,8 @@ Genuinely calls payment-service /payments over HTTP and asserts:
   * missing id returns 400
   * /health returns 200
 
-Failure mode: when payment-service is scaled to 0, this test fails with a
-clean "PAYMENT-SERVICE UNREACHABLE" message (distinct signature from auth
-down).
+When payment-service is unreachable, this test fails with a clear
+"PAYMENT-SERVICE UNREACHABLE" message.
 
 Standalone run:
     PAYMENT_URL=http://localhost:3004 pytest tests/payment/test_payment.py -v

@@ -18,7 +18,7 @@
 //   GET  /processed/:id             → 200 once order-placed seen, else 404
 //   GET  /fulfilled/:id             → convergence state across both topics
 //   POST /stock/seed   {sku,qty}    → upsert in Postgres
-//   POST /cache/seed   {sku,qty}    → set qty in Redis only (induces stale cache)
+//   POST /cache/seed   {sku,qty}    → set qty in Redis only (cache-only write)
 //   POST /cache/flush               → drop all stock:* keys
 //   GET  /stock/:sku                → cache-aside read; {sku, qty, source:"cache"|"db"}
 //   POST /fulfill   {id,sku,qty}    → cache-then-db check; 409 DATA_INCONSISTENCY on stale
@@ -292,7 +292,7 @@ app.get('/consistency/check', async (_req, res) => {
   });
 });
 
-// Active pool exhaustion — induces DB DEGRADED. Spawns N "long" queries
+// Active pool exhaustion, for load testing. Spawns N "long" queries
 // that each hold a pooled connection for `hold` ms. While these run, the
 // pool is saturated and any other query waits, eventually exceeding
 // connectionTimeoutMillis.

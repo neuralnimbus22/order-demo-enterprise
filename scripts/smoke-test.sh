@@ -5,8 +5,7 @@
 # round-trip (register → login → validate), and confirms the infra (kafka
 # topics, redis, postgres) is reachable.
 #
-# READ-ONLY BY DESIGN: no scaling, no deploys, no failure injection — that's
-# break-auth.sh / restore.sh territory. The only write anywhere is the single
+# READ-ONLY BY DESIGN: no scaling and no deploys. The only write anywhere is the single
 # throwaway user row the register step creates (unique email per run, so
 # re-runs never collide on 409).
 #
@@ -21,7 +20,7 @@ NS="${NAMESPACE:-order-demo}"
 TOPICS=( "order-placed" "payment-confirmed" )
 
 # Local probe ports — distinct ranges per script so concurrent runs can't
-# collide (break-auth uses 18402, restore 185xx, place-order 186xx).
+# collide (place-order uses 186xx).
 PROBE_PORT_AUTH="${PROBE_PORT_AUTH:-18701}"
 PROBE_PORT_ORDER="${PROBE_PORT_ORDER:-18702}"
 PROBE_PORT_INV="${PROBE_PORT_INV:-18703}"
@@ -133,7 +132,7 @@ cleanup() {
   done
 }
 trap cleanup EXIT
-# Let the port-forwards bind locally (same wait break-auth.sh uses).
+# Let the port-forwards bind locally.
 for i in 1 2 3 4 5 6 7 8 9 10; do
   curl -sf -o /dev/null --max-time 1 http://localhost:${PROBE_PORT_SESSION}/health 2>/dev/null && break
   sleep 0.5

@@ -87,7 +87,7 @@ app.post('/orders', async (req, res) => {
     if (!item) item = product.name;  // fill item from catalog when not supplied
   }
 
-  // ---- STEP 1: REAL auth call. Refusal on ANY failure mode. -------------
+  // ---- STEP 1: REAL auth call. Refusal on any failure. -------------
   let authResp;
   try {
     authResp = await fetch(`${AUTH_URL}/authorize`, {
@@ -104,8 +104,8 @@ app.post('/orders', async (req, res) => {
     });
   } catch (err) {
     // Network error, DNS failure, timeout, connection refused — all here.
-    // Response is intentionally opaque: it must not reveal WHICH upstream
-    // failed, so that diagnosis genuinely requires walking the chain.
+    // Response is intentionally generic so internal service names and
+    // failure details are not exposed to callers.
     return res.status(502).json({ error: 'upstream dependency unavailable' });
   }
   if (!authResp.ok) {
