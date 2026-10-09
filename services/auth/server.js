@@ -1,5 +1,5 @@
-// auth-service — real authorizer with token validation + three induceable
-// failure signatures (DOWN, REJECT, DEGRADED).
+// auth-service — authorizes order requests by validating a Bearer token
+// and the scopes it carries.
 //
 // Endpoints:
 //   GET  /health     → 200 {status:"ok"}   liveness (always responds when up)
@@ -8,16 +8,12 @@
 //                       missing / unknown token   → 401 {error:"invalid_token"}
 //                       known token, wrong scope  → 403 {error:"insufficient_scope"}
 //
-// Failure-mode controls (env-driven, no code change needed to induce):
-//   AUTH_DEGRADED_MS — if set > 0, every /authorize sleeps this many ms before
-//                      responding. Used to demonstrate the DEGRADED failure
-//                      signature (health passes; functional test times out).
-//   DOWN is induced externally by scaling the deployment to 0.
+// Configuration:
+//   AUTH_REQUIRED_SCOPE — scope a token must carry to authorize an order.
+//   AUTH_DEGRADED_MS    — if set > 0, every /authorize waits this many ms
+//                         before responding. Used for latency testing.
 //
-// Token catalogue (deliberately small, demo-only):
-//   demo-token-good      → scopes: ["orders:create"]   → 200
-//   demo-token-readonly  → scopes: ["orders:read"]      → 403 on /authorize for an order
-//   <anything else>      → 401
+// Tokens are a small static catalogue mapped to scopes, defined below.
 
 const express = require('express');
 
@@ -25,7 +21,7 @@ const PORT             = parseInt(process.env.PORT || '3001', 10);
 const DEGRADED_MS      = parseInt(process.env.AUTH_DEGRADED_MS || '0', 10);
 const REQUIRED_SCOPE   = process.env.AUTH_REQUIRED_SCOPE || 'orders:create';
 
-// Token → scopes. Replace with a real IdP in a non-demo context.
+// Token → scopes. Static catalogue; an identity provider would replace this.
 const TOKENS = {
   'demo-token-good':     ['orders:create'],
   'demo-token-readonly': ['orders:read'],

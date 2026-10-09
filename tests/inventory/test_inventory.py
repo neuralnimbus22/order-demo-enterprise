@@ -10,8 +10,7 @@ inventory's /processed/:id until it returns 200 or the deadline passes.
 Crucially, it does NOT abort the test just because order-service returned
 an error — whether that service was reachable is upstream noise outside
 the inventory team's scope. The only assertion that fails the test is
-"the message never arrived in my consumer." That's the SYMPTOM. Finding
-the CAUSE is the orchestrator's job (it walks upstream).
+"the message never arrived in my consumer."
 
 Standalone run:
     ORDER_URL=http://localhost:3002 \
@@ -37,7 +36,7 @@ def test_order_propagates_to_inventory_via_kafka():
 
     # --- Setup: try to place the order. Log only, don't abort. -----------
     # If order-service is unhappy upstream, that's not the inventory team's
-    # bug to surface — the symptom they see is "no message arrived".
+    # bug to surface — what they see is "no message arrived".
     try:
         place = requests.post(
             f"{ORDER_URL}/orders",
@@ -80,6 +79,5 @@ def test_order_propagates_to_inventory_via_kafka():
         f"MESSAGE NEVER ARRIVED: inventory has no record of order id={order_id} "
         f"after polling /processed/{order_id} {attempts} times over {MAX_WAIT_S}s "
         f"(last HTTP: {last_status}). "
-        "From inventory's perspective the topic was silent. The orchestrator "
-        "should walk upstream: Kafka topic -> order-service publish path -> auth."
+        "From inventory's perspective the topic was silent."
     )

@@ -1,3 +1,3 @@
 # testkube/
 
-See [`samples/`](samples/) for commented reference TestWorkflows used in demos. Production orchestration still lives outside the repo.
+See [`samples/`](samples/) for commented reference TestWorkflows for this system. Other workflows live outside the repo.

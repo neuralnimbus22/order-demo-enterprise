@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # sanity-check.sh — confirm the order-demo system is in a known-clean state.
 #
-# Run before a demo to catch "pod CrashLoopBackOff", "topic missing", "stale
+# Run before testing to catch "pod CrashLoopBackOff", "topic missing", "stale
 # messages in topic", etc. before they bite you on stage.
 #
 # Exit code: 0 if all checks pass, non-zero on the first failure.
@@ -43,7 +43,7 @@ for dep in kafka auth order inventory; do
   )
   desired=${desired:-0}; available=${available:-0}
   if [ "$desired" = "0" ] && [ "$dep" = "auth" ]; then
-    warn "$dep $available/$desired — auth is scaled to 0 (broken state). Run scripts/restore.sh to fix."
+    warn "$dep $available/$desired — auth is scaled to 0. Restore with: kubectl -n $NS scale deploy/auth --replicas=1"
   elif [ "$desired" = "$available" ] && [ "$desired" != "0" ]; then
     ok "$dep $available/$desired"
   else
@@ -60,7 +60,7 @@ if kubectl -n "$NS" exec deploy/kafka -- /opt/kafka/bin/kafka-topics.sh \
   ok "topic '$TOPIC' exists"
 else
   fail "topic '$TOPIC' does not exist"
-  hint "scripts/restore.sh recreates it; or: kubectl -n $NS exec deploy/kafka -- /opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --create --topic $TOPIC --partitions 1 --replication-factor 1"
+  hint "create it with: kubectl -n $NS exec deploy/kafka -- /opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --create --topic $TOPIC --partitions 1 --replication-factor 1"
 fi
 
 # --- 4. topic is empty (zero high-water-mark on partition 0) --------------
@@ -75,7 +75,7 @@ if [ "$hwm" = "0" ]; then
 elif [ "$hwm" = "?" ]; then
   warn "could not read topic high-water-mark"
 else
-  warn "topic '$TOPIC' has $hwm messages (not fresh — run scripts/restore.sh for a clean state)"
+  warn "topic '$TOPIC' has $hwm messages (not fresh)"
 fi
 
 # --- summary --------------------------------------------------------------

@@ -1,6 +1,6 @@
 # IMPLEMENTATION.md — as-built reference
 
-What the four-phase build actually produced. Endpoints, request/response shapes, env vars, ports, Kafka message formats, where each test lives, and **exactly how each failure mode is induced**. Source of truth for the spec is `order-demo-enterprise-build-spec.md`; this file is the source of truth for what's on disk and in the cluster.
+As-built reference: endpoints, request/response shapes, env vars, ports, Kafka message formats, and where each test lives. This file is the source of truth for what's on disk and in the cluster.
 
 All components run in the `order-demo` namespace. Image pattern: `ghcr.io/neuralnimbus22/order-demo-<name>:latest` with `imagePullPolicy: IfNotPresent` (local Docker Desktop build under the same tag is the cached version k8s uses).
 
@@ -50,9 +50,9 @@ user-session   /register · /login (issues signed JWT) · /validate
 |---|---|---|
 | `PORT` | `3001` | listen port |
 | `AUTH_REQUIRED_SCOPE` | `orders:create` | scope required for /authorize success |
-| `AUTH_DEGRADED_MS` | `0` | if `>0`, every /authorize sleeps this many ms before responding — used to induce DEGRADED |
+| `AUTH_DEGRADED_MS` | `0` | if `>0`, every /authorize sleeps this many ms before responding — used for latency testing |
 
-### Built-in token catalogue (demo-only, hard-coded in `server.js`)
+### Token catalogue (hard-coded in `server.js`)
 
 | Token | Scopes |
 |---|---|
@@ -66,14 +66,6 @@ user-session   /register · /login (issues signed JWT) · /validate
 |---|---|---|---|
 | GET | `/health` | — | `200 {"status":"ok"}` |
 | POST | `/authorize` | accepts token in `Authorization: Bearer <t>` **or** `{"token":"<t>", ...}` | `200 {"authorized":true,"scope":["orders:create"]}` · `401 {"error":"invalid_token"}` · `403 {"error":"insufficient_scope","required":"orders:create","have":[...]}` |
-
-### Failure modes — how to induce
-
-| Mode | Induction recipe | Observable signature |
-|---|---|---|
-| **DOWN** | `kubectl -n order-demo scale deploy/auth --replicas=0` (waits ~5s for SIGTERM cap) | direct `curl http://auth.../authorize` → `curl: (7) Connection refused`. Auth has no endpoints. |
-| **REJECT** | Send any unknown token (built into the test) — **or** change order's env: `kubectl -n order-demo set env deploy/order AUTH_TOKEN=invalid-token-xyz` then rollout | `/health` 200; `/authorize` returns 401/403 promptly; auth logs `[auth] REJECT 401 invalid_token` or `[auth] REJECT 403 insufficient_scope` |
-| **DEGRADED** | `kubectl -n order-demo set env deploy/auth AUTH_DEGRADED_MS=5000` then `kubectl -n order-demo rollout restart deploy/auth`. **Reset:** `kubectl -n order-demo set env deploy/auth AUTH_DEGRADED_MS-` (the trailing `-` removes the env) | `/health` instant 200; `/authorize` blocks for 5s; order's 2s fetch timeout fires → order returns 502 |
 
 ### Test
 
@@ -104,7 +96,7 @@ user-session   /register · /login (issues signed JWT) · /validate
 | Method | Path | Body | Response |
 |---|---|---|---|
 | GET | `/health` | — | `200 {"status":"ok"}` |
-| POST | `/orders` | `{"id":"<string>","item":"<string>","qty":<int>,"sku":"<string>"?}` | `201 {"id":"...","item":"...","qty":N,"status":"placed","sku":"..."?}` on success — `sku` appears in the response only if it was in the request · `400 {"error":"id is required"}` if `id` missing · `400 {"error":"id and item are required"}` if both `item` and `sku` missing · `404 {"error":"unknown product","sku":"..."}` if catalog reports an unknown sku · **`502 {"error":"upstream dependency unavailable"}`** on **any** auth or catalog failure (DOWN/REJECT/DEGRADED-timeout / catalog-down / catalog-non-2xx) — opaque on purpose |
+| POST | `/orders` | `{"id":"<string>","item":"<string>","qty":<int>,"sku":"<string>"?}` | `201 {"id":"...","item":"...","qty":N,"status":"placed","sku":"..."?}` on success — `sku` appears in the response only if it was in the request · `400 {"error":"id is required"}` if `id` missing · `400 {"error":"id and item are required"}` if both `item` and `sku` missing · `404 {"error":"unknown product","sku":"..."}` if catalog reports an unknown sku · **`502 {"error":"upstream dependency unavailable"}`** on **any** auth or catalog failure (unreachable, rejected, timed out, or a non-2xx from catalog) — deliberately generic so callers do not see internal details |
 
 ### Internal contract
 
@@ -114,12 +106,6 @@ user-session   /register · /login (issues signed JWT) · /validate
 3. `fetch(${AUTH_URL}/authorize, { Authorization: Bearer ${AUTH_TOKEN}, body: {orderId, token} }, signal: AbortSignal.timeout(2000))`.
 4. If anything fails in step 3 (network error, non-2xx, `authorized!==true`) → 502 opaque, no Kafka publish.
 5. Only on success: `producer.send({topic:'order-placed', messages:[{key:id, value: JSON}]})`. The Kafka payload includes `sku` only when it was supplied — inventory ignores unknown fields, so this is forward-compatible.
-
-### Failure modes induced via order
-
-| Mode | Induction recipe |
-|---|---|
-| **bad token** | `kubectl -n order-demo set env deploy/order AUTH_TOKEN=invalid-token-xyz` then `kubectl -n order-demo rollout restart deploy/order`. Reset: set back to `demo-token-good` |
 
 ### Resource limits + HPA
 
@@ -170,12 +156,6 @@ Applied automatically by `scripts/deploy.sh` as part of `kubectl apply -f k8s/`.
 | GET | `/health` | — | `200 {"status":"ok"}` |
 | POST | `/payments` | `{"id":"<string>","amount":<number?>}` | `201 {"id":"...","status":"confirmed"}` · `400` on missing id · `502` on Kafka publish failure · `503` if producer not yet connected |
 
-### Failure modes
-
-| Mode | Induction recipe | Signature |
-|---|---|---|
-| **PAYMENT DOWN** | `kubectl -n order-demo scale deploy/payment --replicas=0` | direct call: `curl: (7) Connection refused`. Indirect (via inventory) signature documented under inventory. |
-
 ### Test
 
 - **File:** `tests/payment/test_payment.py` (pytest)
@@ -208,7 +188,7 @@ Recorded trade-off: both services have read/write access to each other's tables 
 |---|---|---|
 | `PORT` | `3005` | listen port |
 | `DB_HOST` / `DB_PORT` / `DB_USER` / `DB_PASSWORD` / `DB_NAME` | `localhost` / `5432` / `inventory` / `inventory` / `inventory` | Postgres connection — same set inventory uses |
-| `DB_POOL_MAX` | `4` | pg pool size (slightly larger than inventory's 2 — catalog has no pool-exhaustion demo and serves a higher read mix) |
+| `DB_POOL_MAX` | `4` | pg pool size (slightly larger than inventory's 2 — catalog serves a higher read mix) |
 | `DB_TIMEOUT_MS` | `2000` | pg `connectionTimeoutMillis` |
 
 ### Schema + seed (auto-created on startup)
@@ -242,7 +222,7 @@ CREATE TABLE IF NOT EXISTS products (
 - **Deps:** `tests/product-catalog/requirements.txt`
 - **Env:** `PRODUCT_CATALOG_URL` (default `http://localhost:3005`)
 - **Run:** `PRODUCT_CATALOG_URL=http://localhost:3005 pytest tests/product-catalog/test_product_catalog.py -v`
-- **Wiring:** **Not** in `ci-tests.yml`, **not** in any TestKube workflow. Lives in its folder for any orchestrator to pick up; pipeline wiring deferred on purpose.
+- **Wiring:** **Not** in `ci-tests.yml`, **not** in any TestKube workflow. Lives in its folder for any pipeline to pick up; pipeline wiring deferred on purpose.
 
 ---
 
@@ -257,11 +237,10 @@ Human-identity service for the Phase 2 UI. Real `/register`, `/login` (issues si
 | | `auth-service` | `user-session` |
 |---|---|---|
 | What it authorizes | an ORDER in the backend | a HUMAN logging into the UI |
-| Token model | static Bearer-token catalogue (`demo-token-good`, `demo-token-readonly`) | signed JWTs (HS256 via `jsonwebtoken`) |
+| Token model | static Bearer-token catalogue | signed JWTs (HS256 via `jsonwebtoken`) |
 | Storage | none — token catalogue is hard-coded in `server.js` | Postgres `users` table |
 | Who calls it | `order-service` (server-to-server, every /orders request) | the Phase 2 UI (browser → backend) |
 | On the order pipeline? | yes — deepest upstream | no — standalone |
-| Failure mode | DOWN / REJECT / DEGRADED demoed via scale-to-0 and `AUTH_DEGRADED_MS` | not part of any failure-signature demo |
 
 They do not share code, tokens, or a database table.
 
@@ -328,7 +307,7 @@ JWT claims include `sub` (subject = email), `email`, `iat`, `exp`. Signed with `
 - **Deps:** `tests/user-session/requirements.txt`
 - **Env:** `USER_SESSION_URL` (default `http://localhost:3006`)
 - **Run:** `USER_SESSION_URL=http://localhost:3006 pytest tests/user-session/test_user_session.py -v`
-- **Wiring:** **Not** in `ci-tests.yml`, **not** in any TestKube workflow. Lives in its folder for any orchestrator to pick up; pipeline wiring deferred on purpose.
+- **Wiring:** **Not** in `ci-tests.yml`, **not** in any TestKube workflow. Lives in its folder for any pipeline to pick up; pipeline wiring deferred on purpose.
 - **Coverage:** `/health` · register (success + duplicate 409 + missing fields 400) · login (success + wrong password 401 + unknown email 401, both opaque) · `/validate` (good JWT → identity claims + missing → 401 + garbage → 401). Generates a fresh uuid-email per run so re-runs against the same DB don't 409 on the first register.
 
 ---
@@ -354,8 +333,8 @@ This service is the convergence point and accumulates all three later phases. It
 | `DB_HOST` | `localhost` | 4 | postgres host |
 | `DB_PORT` | `5432` | 4 | postgres port |
 | `DB_USER` / `DB_PASSWORD` / `DB_NAME` | `inventory` / `inventory` / `inventory` | 4 | postgres creds |
-| `DB_POOL_MAX` | `2` | 4 | **intentionally tiny** so pool exhaustion is easy to demonstrate |
-| `DB_TIMEOUT_MS` | `2000` | 4 | `pg` pool connectionTimeoutMillis — this is what fires under DB DEGRADED |
+| `DB_POOL_MAX` | `2` | 4 | small pool |
+| `DB_TIMEOUT_MS` | `2000` | 4 | `pg` pool connectionTimeoutMillis |
 
 ### Schema (auto-created on startup)
 
@@ -377,24 +356,16 @@ CREATE TABLE IF NOT EXISTS stock (
 | 3 | GET | `/processed/:id` | — | `200 {"id":"...","processed":true,"processedAt":"<iso>"}` once `order-placed` seen; else `404` |
 | 4 | GET | `/fulfilled/:id` | — | `200 {"id":"...","orderPlaced":"<iso>|null","paymentConfirmed":"<iso>|null","fulfilled":<bool>,"waitingFor":[...]}` or `404` |
 | 5 | POST | `/stock/seed` | `{"sku":"...","qty":<int>}` | `200 {"sku":"...","qty":N,"source":"db"}` — upserts in postgres |
-| 6 | POST | `/cache/seed` | `{"sku":"...","qty":<int>}` | `200 {"sku":"...","qty":N,"source":"cache"}` — sets Redis ONLY (poisons cache) |
+| 6 | POST | `/cache/seed` | `{"sku":"...","qty":<int>}` | `200 {"sku":"...","qty":N,"source":"cache"}` — sets Redis ONLY |
 | 7 | POST | `/cache/flush` | — | `200 {"flushed":N}` — drops all `stock:*` Redis keys |
 | 8 | GET | `/stock/:sku` | — | `200 {"sku":"...","qty":N,"source":"cache"\|"db"}` · `404` if unknown sku · `502` on backing-store error |
 | 9 | POST | `/fulfill` | `{"id":"...","sku":"...","qty":<int>}` | `200 {"id":"...","sku":"...","qty":N,"fulfilled":true,"remaining":N}` · **`409 {"error":"DATA_INCONSISTENCY","cacheQty":N,"dbQty":N}`** · `409 {"error":"insufficient_stock"}` · `503 {"error":"db_unavailable","detail":"..."}` |
 | 10 | GET | `/consistency/check` | — | `200 {"consistent":true,...}` or `409 {"consistent":false,"mismatches":[{"sku":"...","cacheQty":N,"dbQty":N,"agree":false}],...}` |
 | 11 | POST | `/db/exhaust` | `{"hold":<ms>?,"n":<int>?}` | `200 {"started":N,"hold":<ms>}` — fires N background `SELECT pg_sleep(hold/1000)` queries that each hold a pooled connection, **saturating the pool for `hold` ms** |
 
-### Failure modes induced via inventory
-
-| Mode | Induction recipe |
-|---|---|
-| **STALE CACHE** (Phase 3) | `curl -X POST .../stock/seed -d '{"sku":"X","qty":0}'` then `curl -X POST .../cache/seed -d '{"sku":"X","qty":10}'`. Now DB says 0, cache says 10. `POST /fulfill {id,sku:X,qty:1}` returns `409 DATA_INCONSISTENCY`. `GET /consistency/check` reports the mismatch. **All `/health` and `/db/health` stay 200.** Reset: `POST /cache/flush`. |
-| **DB DOWN** (Phase 4) | `kubectl -n order-demo scale deploy/db --replicas=0; kubectl -n order-demo wait --for=delete pod -l app=db`. `/db/health` returns `503 {"db":"unreachable","detail":"connect ECONNREFUSED <ip>:5432"}`. Restore: `kubectl -n order-demo scale deploy/db --replicas=1`. **Inventory pool may need recovery** — `kubectl -n order-demo rollout restart deploy/inventory` after DB is back to be safe. |
-| **DB DEGRADED** (Phase 4) | `curl -X POST .../db/exhaust -d '{"hold":8000,"n":2}'`. For the next ~8s the 2-connection pool is saturated. `/db/health` returns `503 {"db":"unreachable","detail":"db_health_timeout"}`, `/fulfill` returns `503 {"error":"db_unavailable","detail":"timeout exceeded when trying to connect"}`. **Self-recovers** when `pg_sleep` finishes. |
-
 ### Tests
 
-- **File:** `tests/inventory/test_inventory.py` (pytest) — original convergence/symptom test; uses `/processed/:id`. Verifies "message arrived in inventory". Used by the orchestrator demo as the downstream symptom test.
+- **File:** `tests/inventory/test_inventory.py` (pytest) — places an order and polls `/processed/:id` to verify the message arrived in inventory.
   - **Env:** `ORDER_URL`, `INVENTORY_URL`, `INVENTORY_POLL_TIMEOUT_S` (default 20)
   - **Run:** `ORDER_URL=http://localhost:3002 INVENTORY_URL=http://localhost:3003 pytest tests/inventory/test_inventory.py -v`
 - **File:** `tests/inventory/test_cache_consistency.py` (pytest, Phase 3 addition) — three tests:
@@ -445,22 +416,6 @@ kubectl -n order-demo exec deploy/kafka -- /opt/kafka/bin/kafka-topics.sh \
 
 ---
 
-## Failure-signature reference (the seven from the spec, all live)
-
-One end-to-end symptom (order not fulfilled), seven distinct causes:
-
-| Cause | Where to look | Signature |
-|---|---|---|
-| auth DOWN | `curl auth.../authorize` direct | `curl: (7) Connection refused`; `kubectl -n order-demo get endpoints auth` empty; `order-placed` topic gets NO new message for the id |
-| auth REJECT | auth pod logs | `[auth] REJECT 401 invalid_token` / `[auth] REJECT 403 insufficient_scope`; `/health` 200; order returns opaque 502 |
-| auth DEGRADED | timing | auth `/health` 200; `/authorize` blocks `AUTH_DEGRADED_MS`; order's 2s fetch timeout fires → opaque 502 |
-| payment DOWN | `/fulfilled/:id` on inventory | `orderPlaced` is set, `paymentConfirmed:null`, `waitingFor:["payment-confirmed"]` |
-| STALE CACHE | `GET /consistency/check`, `POST /fulfill` | All `/health` 200; `/consistency/check` → 409 mismatch; `/fulfill` → 409 `DATA_INCONSISTENCY` with `cacheQty` vs `dbQty` |
-| DB DOWN | `/db/health` | 503 `{"db":"unreachable","detail":"connect ECONNREFUSED <ip>:5432"}`; raw TCP probe → connection refused |
-| DB DEGRADED | `/db/health` under load | 503 `{"db":"unreachable","detail":"db_health_timeout"}` and 503 `{"error":"db_unavailable","detail":"timeout exceeded when trying to connect"}` — note **timeout**, not refused; auto-recovers |
-
----
-
 ## End-to-end happy-path recipe
 
 ```bash
@@ -505,47 +460,4 @@ Two GitHub Actions workflows live in `.github/workflows/`. Both target the live 
 - **Triggers:** push to `main`.
 - **Runner:** `self-hosted` (cluster-resident, so it can `kubectl port-forward` into `order-demo`).
 - **Job order:** `auth-tests` → `order-tests` → `payment-tests` → `inventory-tests`. Each job installs its deps if needed, port-forwards the service it targets (and any others it calls into), and runs the standalone test command.
-- **Note:** this is the in-repo CI — the broader TestKube orchestration that walks the dependency chain lives outside this repo.
-
----
-
-## Deviations from `order-demo-enterprise-build-spec.md`
-
-Things implemented differently from the spec, with the reason.
-
-### 1. Built all four phases without per-phase approval gates
-**Spec (Part A rule 1):** "Build in phases, in order. Stop after each phase." **Done:** built all four in sequence in a single session.
-**Why:** explicit user instruction to do so this session ("do NOT pause and wait for my approval between phases"). Per-phase verification gates from rule 2 were still enforced — each phase's verification check was run and its output shown before moving to the next.
-
-### 2. Three admin endpoints added on inventory that the spec didn't enumerate
-Endpoints: `POST /stock/seed`, `POST /cache/seed`, `POST /cache/flush`, `POST /db/exhaust`.
-**Why:** the spec **describes** how to induce STALE CACHE ("seed Redis with stock that disagrees with the DB") and DB DEGRADED ("exhaust the connection pool"), but doesn't dictate the mechanism. These endpoints make the recipes one-line curl calls so a TestKube workflow or human can induce the failure declaratively without `kubectl exec` into redis-cli / psql. They are clearly demo/admin-grade and would not exist in a production service.
-
-### 3. Inventory has both `/health` and `/db/health`
-**Spec:** describes DB DOWN as "inventory health degraded/failing; clean connection error to db FQDN".
-**Why deviation:** rather than make the main `/health` couple to the DB (which would make the DEGRADED case kill readiness probes and replace the failure with a CrashLoop), I kept `/health` as pure-liveness and added `/db/health` as the DB-dependent probe. That gives the spec's required clean-connection-error signature on `/db/health` while letting Kubernetes correctly leave the pod Ready during DB DEGRADED — which is the whole point of the "slow not down" signature.
-
-### 4. `/db/health` wraps the SELECT in a 1.5s race-timeout
-**Why:** without this, a stalled-pool query would just hang `/db/health` forever (until the pool wait timeout fires inside `pg`, at which point the response is the same as DB DOWN — `ECONNREFUSED` was the only distinguishable error). The race-timeout produces a distinct `db_health_timeout` error string under DB DEGRADED while still letting DB DOWN show its `ECONNREFUSED` signature. This is what makes the two modes textually distinguishable.
-
-### 5. DB pool intentionally tiny (`DB_POOL_MAX=2`)
-**Spec:** "exhaust the connection pool (hold connections)" — implies a small pool.
-**Why explicit:** with a default 10-connection pool, demonstrating exhaustion needs 10 concurrent slow queries which is awkward. Pinning to 2 makes `/db/exhaust` with `n:2` reliably saturate the pool. Documented as an env var so it can be widened later if a more "realistic" pool size is needed for a different demo.
-
-### 6. Three failure modes for DEGRADED are env-driven, not code-driven
-**Why:** `AUTH_DEGRADED_MS` is an env on the auth deployment; the recipe to induce it is `kubectl set env` + `rollout restart`. Same shape for any future "this service degrades" knob. Keeps the app code clean of conditional fault-injection logic and keeps the recipe `kubectl`-only.
-
-### 7. Existing tests in `tests/inventory/test_inventory.py` and `tests/order/order.postman_collection.json` were preserved unchanged
-**Why:** they still pass against the post-Phase-4 system because the endpoints they target (`POST /orders` and `GET /processed/:id`) kept the same contract. Phase 2's "needs both messages" requirement is exposed via the **new** `/fulfilled/:id` endpoint, leaving the old `/processed/:id` (single-topic semantics) intact for the orchestrator-demo flow it was designed for. The Postman collection also did not need a token change because order-service injects `AUTH_TOKEN` server-side from its env — the client never sees it.
-
-### 8. `tests/payment/test_payment.py` uses pytest (not "API tests" as a separate framework)
-**Spec (Part B):** "API tests (payment)".
-**Why deviation:** pytest already gives clean API-test ergonomics and the rest of the system uses pytest for two of the three other services. Treating "API tests" as just "pytest hitting HTTP" keeps the testing surface coherent without adding a fourth tool. Postman/Newman remains the order-service test, satisfying the tool-variety intent.
-
-### 9. The carried-over scripts (`scripts/deploy.sh`, `scripts/break-auth.sh`, etc.) were not updated for new services *(partially resolved)*
-**Original:** out of scope for the original four-phase build. They still worked for the auth-only break/restore demo flow.
-
-**Now:** `scripts/deploy.sh` has been updated to bring up the full current stack — pre-creates both Kafka topics (`order-placed` and `payment-confirmed`), waits for every service + infra Deployment (auth, order, payment, inventory, redis, db) to be Available, and rollout-restarts all three kafkajs clients (order, payment, inventory) after Kafka is up. It also applies the new HPA on order via `kubectl apply -f k8s/`. The only remaining deferrals are `break-auth.sh` / `restore.sh` / `sanity-check.sh` / `place-order.sh`, which still encode only the original three-service flow and don't know about payment, redis, db, or the second topic. Those, plus any services not yet built (product-catalog, user-session), are later-phase work.
-
-### 10. CLAUDE.md was stale at the time of the original four-phase build
-At the time of the as-built write, `CLAUDE.md` still described the pre-enterprise topology (three services, one topic). It has since been refreshed in a docs-only pass to match the 4-service reality (payment, `payment-confirmed`, Postgres, Redis, inventory's full convergence + cache/DB surface). `README.md` was refreshed in the same pass. `ARCHITECTURE.md` was already accurate and was not touched.
+- **Note:** this is the in-repo CI. TestKube workflows live outside this repo.

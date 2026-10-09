@@ -1,58 +1,39 @@
 # order-demo-enterprise
 
-A four-service Kubernetes-native demo whose purpose is to make **upstream root-cause confirmation** visible end to end. The failure case is deliberate: a downstream test reports the symptom, then an orchestrator (built separately in TestKube — **not** in this repo) walks back along the real dependency chain and confirms which boundary actually broke.
-
-## The story
-
-A realistic enterprise order pipeline. Two producers converge on a downstream consumer; failure flows **down**; the deepest **upstream** break is the true cause.
+An e-commerce order pipeline built as six Node.js services on Kubernetes. An order is authorized, placed, paid for and fulfilled, with event-driven convergence over Kafka, a read-through cache, and a Postgres database.
 
 ```
 auth-service ──┐
                │ (authorize)
 order-service ─┤── publishes ──► Kafka: order-placed ──────┐
                │                                            ├──► inventory-service ──► Redis cache ──► Postgres
-payment-service ── publishes ──► Kafka: payment-confirmed ─┘    (convergence + symptom point)
+payment-service ── publishes ──► Kafka: payment-confirmed ─┘    (convergence point)
 ```
 
-When `auth` is down, the cascade on the order branch is:
+## How an order flows
 
-1. `order-service` calls `auth.POST /authorize` → it fails.
-2. `order-service` refuses to publish. (The honesty rule below.)
-3. `inventory-service` may still receive `payment-confirmed` from the independent payment branch, but **fulfillment never completes** because `order-placed` never arrived for that id. `/fulfilled/:id` reports `waitingFor: ["order-placed"]`.
+1. `order-service` calls `auth-service` to authorize the order. Only when auth authorizes it does order publish `order-placed`.
+2. `payment-service` confirms payment and publishes `payment-confirmed`. It is independent of auth and order.
+3. `inventory-service` consumes both topics. It marks an order fulfilled only once it has seen both events for the same order id. `GET /fulfilled/:id` reports the convergence state, including what it is still `waitingFor`.
+4. Inventory reads stock through a Redis cache backed by Postgres.
 
-When `payment` is down, the symmetric thing happens: `order-placed` arrives, `payment-confirmed` doesn't, `waitingFor: ["payment-confirmed"]`. From the downstream test's perspective the only thing visible is "fulfillment never completed" — which side broke is invisible across the Kafka boundary. That invisibility is the whole point of the demo, and the **`waitingFor`** field is the structural cue the orchestrator uses to disambiguate.
+## Design rules
 
-The system also models failures that have nothing to do with messages going missing:
-- **Stale cache** — every service `/health` is 200, yet `/fulfill` returns `409 DATA_INCONSISTENCY` because Redis disagrees with Postgres. A distinct signature; no connection error anywhere.
-- **DB DOWN vs DB DEGRADED** — connection refused versus pool-exhaustion timeout. Same downstream symptom; clearly different signatures on `/db/health`.
-
-## Dependency-direction rules (non-negotiable)
-
-These rules make the demo honest. The orchestration layer can only prove what the system actually does.
-
-- **Dependencies are real, never faked.** `order` genuinely calls `auth`; `payment` genuinely publishes; `inventory` genuinely consumes from Kafka and genuinely reads from Redis + Postgres. There is no staged cascade — if you stop `auth`, the cascade fires because the code paths really require those calls.
-- **If `auth` is unreachable / rejecting / degraded-timing-out, `order` MUST fail to publish.** Hard refusal: opaque `502 {"error":"upstream dependency unavailable"}`. No fallback "publish anyway". The opacity is intentional — the symptom must never name auth, or diagnosis isn't actually required.
-- **If `order` never published, `inventory` MUST genuinely time out** waiting on the consumer. Not a synthetic assertion error — a real "I waited and nothing arrived" condition.
-- **`payment` is a parallel producer.** It's independent of `auth` and `order`. Inventory needs BOTH `order-placed` AND `payment-confirmed` for the same id before it considers an order fulfilled — verified via `/fulfilled/:id`.
-- **Each test runs in a different framework on purpose.** pytest for auth / payment / inventory, Postman/Newman for order, k6 for the load test. The orchestrator that walks upstream has to be tool-agnostic, and proving that requires actual heterogeneity.
+- **Dependencies are real.** `order` calls `auth` over HTTP before publishing. `payment` publishes to Kafka. `inventory` consumes from Kafka and reads from Redis and Postgres.
+- **No publish without authorization.** If `auth` cannot authorize an order, `order` does not publish and returns `502 {"error":"upstream dependency unavailable"}`. The response is deliberately generic so internal service names and failure details are not exposed to callers.
+- **Payment is a parallel producer.** It is independent of `auth` and `order`. Inventory needs both `order-placed` and `payment-confirmed` for the same id before an order is fulfilled.
 
 ## What's in this repo
 
-The application + the raw plumbing that any test orchestrator can drive:
-
 | Path | Contents |
 |---|---|
-| `services/auth`, `services/order`, `services/payment`, `services/inventory`, `services/product-catalog`, `services/user-session` | The six Node.js services. `auth-service` and `user-session` are intentionally separate identity concepts — auth authorizes ORDERS in the backend; user-session is human login for the UI. |
+| `services/auth`, `services/order`, `services/payment`, `services/inventory`, `services/product-catalog`, `services/user-session` | The six Node.js services. `auth-service` and `user-session` are separate identity concepts: auth authorizes orders server to server, user-session is human login for the UI. |
 | `kafka/` | KRaft-mode single-broker Kafka manifests; topics `order-placed` and `payment-confirmed` |
-| `k8s/` | Per-service Deployment + Service manifests + namespace, `redis.yaml` and `db.yaml` for the backing infra, and `hpa.yaml` (HPA on order-service for the load-test scaling demo) |
-| `tests/auth`, `tests/order`, `tests/payment`, `tests/inventory`, `tests/product-catalog`, `tests/user-session` | Per-service test files (pytest, Newman, pytest, pytest, pytest, pytest) — runnable standalone. `tests/product-catalog` and `tests/user-session` are not wired into ci-tests.yml yet (deferred). |
-| `tests/load` | k6 load test that drives `POST /orders` hard enough to trigger HPA scaling on order-service |
-| `scripts/` | `deploy.sh` (one-command bring-up), `break-auth.sh`, `restore.sh`, `sanity-check.sh`, `place-order.sh`, `smoke-test.sh` (read-only health + functional check of all six services and the infra) |
-| `.github/workflows/` | `build-images.yml` (multi-arch image builds → GHCR) and `ci-tests.yml` (sequential test runs) |
-| `testkube/` | Intentionally empty — see `testkube/README.md` |
+| `k8s/` | Per-service Deployment and Service manifests, the namespace, `redis.yaml` and `db.yaml` for the backing infra, and `hpa.yaml` (autoscaling for order-service) |
+| `tests/auth`, `tests/order`, `tests/payment`, `tests/inventory`, `tests/product-catalog`, `tests/user-session` | Per-service tests (pytest, Newman, pytest, pytest, pytest, pytest), each runnable standalone. `tests/product-catalog` and `tests/user-session` are not wired into ci-tests.yml yet. |
+| `tests/load` | k6 load test against `POST /orders`, sized to trigger autoscaling on order-service |
+| `scripts/` | `deploy.sh` (one-command bring-up), `sanity-check.sh`, `place-order.sh`, `smoke-test.sh` (read-only health and functional check of all six services and the infra) |
+| `.github/workflows/` | `build-images.yml` (multi-arch image builds to GHCR) and `ci-tests.yml` (sequential test runs) |
+| `testkube/` | See `testkube/README.md` |
 
-For the topology of record (FQDNs + ports), see **`ARCHITECTURE.md`**. For the as-built endpoint reference and exact failure-induction recipes, see **`IMPLEMENTATION.md`**.
-
-## What's NOT in this repo
-
-The TestKube TestWorkflows, the orchestrator that walks upstream, the condition/execute branching logic, the composite workflow, and any control-plane wiring all live **outside** this repo and are built separately, by hand. The application here is deliberately decoupled from how it gets tested so that the orchestration layer can be reasoned about on its own.
+For the topology and in-cluster addresses, see **`ARCHITECTURE.md`**. For the endpoint reference, see **`IMPLEMENTATION.md`**.
