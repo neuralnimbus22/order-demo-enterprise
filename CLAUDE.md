@@ -51,6 +51,7 @@ They do not share code, tokens, or a database table.
 | `services/inventory/server.js` | `kafkajs` consumer subscribed to BOTH topics (group `inventory-service`, `fromBeginning: true`). Tracks per-id arrivals in an in-process Map. `/health` (liveness only — does NOT touch DB), `/db/health`, `/processed/:id`, `/fulfilled/:id`. Stock layer: `POST /stock/seed`, `POST /cache/seed`, `POST /cache/flush`, `GET /stock/:sku`, `POST /fulfill` (cache-vs-DB check), `GET /consistency/check`, `POST /db/exhaust` (holds pool connections busy, for load testing). |
 | `services/*/Dockerfile` | All `node:20-alpine`, `npm install --omit=dev`, run as USER `node`. |
 | `kafka/kafka.yaml` | `apache/kafka:3.7.0` KRaft single-node combined mode (broker+controller), `emptyDir` storage, auto-create-topics enabled. |
+| `kafka/kafka-topics.yaml` | Job that creates `order-placed` and `payment-confirmed` (same as deploy.sh step 3). Argo CD runs it as a Sync hook in wave -1, between the data stores (-2) and the services (0). Safe to repeat (`--if-not-exists`). |
 | `k8s/namespace.yaml` | Creates `order-demo`. |
 | `k8s/{auth,order,payment,inventory,product-catalog,user-session}.yaml` | Deployment + Service for each. Images `ghcr.io/neuralnimbus22/order-demo-{name}:latest` (public, multi-arch), `imagePullPolicy: IfNotPresent`. order has CPU/memory `requests/limits` so an HPA can scale it. user-session carries `JWT_SECRET` as an env value here; production would use a Kubernetes Secret. |
 | `k8s/redis.yaml` | `redis:7-alpine` — read-through cache for inventory stock lookups. Service `redis:6379`. |
@@ -103,6 +104,16 @@ kubectl apply -f k8s/
 kubectl -n order-demo rollout restart deploy/order deploy/payment deploy/inventory
 ```
 
+**Deploy with Argo CD (no script):** the objects that must come first carry an `argocd.argoproj.io/sync-wave` annotation, so Argo CD brings the backend up in the same order as `deploy.sh`. Anything without the annotation is wave 0 and starts last, so a new service file needs no annotation.
+
+| Wave | What | Argo CD waits for |
+|---|---|---|
+| -2 | namespace, Kafka, Postgres (with its PVC), Redis | each Deployment ready (readiness probes) |
+| -1 | `kafka/kafka-topics.yaml` Job (Sync hook) | the Job to succeed |
+| 0 (no annotation) | auth, order, payment, inventory, product-catalog, user-session, HPA | |
+
+The services start with Kafka up and both topics in place, so the rollout restart from deploy.sh step 6 is not needed. The Argo CD Application that reads `kafka/` and `k8s/` lives in the `order-demo-gitops` repo, `apps/order-demo-backend.yaml`. `kubectl apply` ignores the annotations, so `deploy.sh` works as before.
+
 **Sanity check:** `./scripts/sanity-check.sh` → expects all `[OK]`.
 
 **Run a test standalone (port-forward first):**
@@ -133,7 +144,8 @@ ORDER_URL=http://localhost:13002 k6 run tests/load/order-load.js
 - **Auth has a SIGTERM handler + `terminationGracePeriodSeconds: 5`** in `k8s/auth.yaml`, so it shuts down in seconds instead of the default 30.
 - **Kafka consumer + auto-create-topics interaction**: auto-create fires on PRODUCE, not SUBSCRIBE. If inventory starts before any message is published, its subscribe errors. Fix: pre-create the topics. `scripts/deploy.sh` pre-creates both.
 - **Kafka storage is `emptyDir`**: a Kafka pod restart loses the topics. Re-create them, then restart the kafkajs clients.
-- **Kafka client retry window**: `kafkajs` retries a broker connect ~5 times (~15s total) and then **gives up permanently**, leaving the pod alive but disconnected. Any service that hosts a kafkajs client — **order, payment, and inventory** — hits this if it starts before Kafka is reachable. Fix: rollout-restart all three after Kafka is up. `scripts/deploy.sh` does this automatically.
+- **Kafka client retry window**: `kafkajs` retries a broker connect ~5 times (~15s total) and then **gives up permanently**, leaving the pod alive but disconnected. Any service that hosts a kafkajs client — **order, payment, and inventory** — hits this if it starts before Kafka is reachable. Fix: rollout-restart all three after Kafka is up. `scripts/deploy.sh` does this automatically. Under Argo CD the sync waves start these three only after Kafka is ready and the topics exist, so they connect on the first try.
+- **Argo CD and the HPA**: the HPA changes `order`'s replica count. The Argo CD Application must ignore `spec.replicas` on `deploy/order` (ignoreDifferences), or self-heal resets it to 1 while the HPA scales up.
 - **Inventory's `/health` is liveness-only** — it does NOT touch the DB, so a slow database does not fail the readiness probe. Use `/db/health` to check DB reachability.
 - **DB pool is small** (`DB_POOL_MAX=2`).
 - **Scripts use port-forwards internally** — they assume a working `kubectl` and proper cluster context.

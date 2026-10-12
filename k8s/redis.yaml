@@ -3,6 +3,9 @@ kind: Deployment
 metadata:
   name: redis
   namespace: order-demo
+  annotations:
+    # Argo CD sync wave -2: Redis starts with Kafka and Postgres, before the services (wave 0).
+    argocd.argoproj.io/sync-wave: "-2"
   labels:
     app: redis
 spec:
@@ -40,6 +43,8 @@ kind: Service
 metadata:
   name: redis
   namespace: order-demo
+  annotations:
+    argocd.argoproj.io/sync-wave: "-2"
   labels:
     app: redis
 spec:

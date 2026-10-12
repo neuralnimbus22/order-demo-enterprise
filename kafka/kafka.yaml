@@ -3,6 +3,9 @@ kind: Deployment
 metadata:
   name: kafka
   namespace: order-demo
+  annotations:
+    # Argo CD sync wave -2: Kafka starts before the services (wave 0). Argo CD waits until the readinessProbe below passes.
+    argocd.argoproj.io/sync-wave: "-2"
   labels:
     app: kafka
 spec:
@@ -81,6 +84,8 @@ kind: Service
 metadata:
   name: kafka
   namespace: order-demo
+  annotations:
+    argocd.argoproj.io/sync-wave: "-2"
   labels:
     app: kafka
 spec:
