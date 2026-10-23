@@ -1,0 +1,66 @@
+name: PR tests
+
+# Runs every test tied to a pull request in Testkube, as one suite:
+# Playwright UI journeys, a k6 load check and the custom checkout journey.
+# The suite and every test in it are tagged with the pull request number,
+# the commit and the repository, so Testkube can show them in one view.
+#
+# Needs one repository secret: TESTKUBE_API_TOKEN, an API token for the
+# Testkube environment below.
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+
+jobs:
+  testkube:
+    name: Every test for this PR
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      PR: ${{ github.event.pull_request.number }}
+      SHA: ${{ github.event.pull_request.head.sha }}
+      REPO: ${{ github.event.repository.name }}
+    steps:
+      - name: Check the Testkube token is set
+        env:
+          TOKEN_SET: ${{ secrets.TESTKUBE_API_TOKEN != '' }}
+        run: |
+          if [ "$TOKEN_SET" != "true" ]; then
+            echo "::error::Add the repository secret TESTKUBE_API_TOKEN (Settings, Secrets and variables, Actions), then re-run this job."
+            exit 1
+          fi
+
+      - name: Set up the Testkube CLI
+        uses: kubeshop/setup-testkube@v1
+        with:
+          organization: tkcorg_b5ace2135f138dc8
+          environment: tkcenv_362177294460621a
+          token: ${{ secrets.TESTKUBE_API_TOKEN }}
+
+      - name: Run every test tied to this pull request
+        run: |
+          set -o pipefail
+          testkube run testworkflow pr-suite \
+            --config pr="$PR" \
+            --config sha="$SHA" \
+            --config repo="$REPO" \
+            -f | tee testkube-output.txt
+
+      - name: Link the results on this pull request
+        if: always()
+        run: |
+          URL=$(sed -E 's/\x1B\[[0-9;]*[A-Za-z]//g' testkube-output.txt 2>/dev/null \
+            | grep -oE 'https?://[^ ]+/execution/[0-9a-f]{24}' | tail -1 || true)
+          {
+            echo "### Every test for PR #$PR"
+            echo ""
+            if [ -n "$URL" ]; then
+              echo "Playwright, k6 and the custom checkout test ran as one suite: [open it in Testkube]($URL)"
+              echo ""
+            fi
+            echo "Every run for this pull request carries the tag \`pr=$PR\`, so a filter on that tag in Testkube shows them all, across pushes."
+          } >> "$GITHUB_STEP_SUMMARY"

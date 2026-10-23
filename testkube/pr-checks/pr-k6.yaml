@@ -1,0 +1,63 @@
+# k6 load check for a pull request: POST /orders on the order service.
+# The script comes from the pull request's own commit (config.sha).
+apiVersion: testworkflows.testkube.io/v1
+kind: TestWorkflow
+metadata:
+  name: pr-k6
+  labels:
+    app: order-demo
+    tool: k6
+    pr-check: "true"          # pr-suite runs every workflow with this label
+spec:
+  config:
+    pr:
+      type: string
+      default: manual
+      description: Pull request number
+    sha:
+      type: string
+      default: main
+      description: Commit to test
+    repo:
+      type: string
+      default: order-demo-enterprise
+      description: Repository of the pull request
+  execution:
+    target:
+      match:
+        name: [testkube-runner]   # the runner in the lab cluster, next to the services
+    tags:
+      pr: "{{ config.pr }}"
+      sha: "{{ config.sha }}"
+      repo: "{{ config.repo }}"
+  content:
+    git:
+      uri: https://github.com/neuralnimbus22/order-demo-enterprise
+      revision: "{{ config.sha }}"
+      paths:
+        - tests/load
+  container:
+    image: grafana/k6:0.49.0
+    workingDir: /data/repo/tests/load
+    env:
+      - name: ORDER_URL
+        value: http://order.order-demo.svc.cluster.local:3002
+      - name: K6_WEB_DASHBOARD
+        value: "true"
+      - name: K6_WEB_DASHBOARD_EXPORT
+        value: k6-report.html
+  steps:
+    - name: Run a short load check
+      # order-load.js ramps to 500 users on its own. These stages keep a
+      # pull request check to 35 seconds at 10 users. The script's
+      # thresholds (p95 under 800 ms, under 5% failed) still decide the result.
+      shell: |
+        k6 run order-load.js \
+          --stage 10s:10 --stage 20s:10 --stage 5s:0 \
+          --summary-export k6-summary.json
+    - name: Save the load report
+      condition: always
+      artifacts:
+        paths:
+          - k6-summary.json
+          - k6-report.html
