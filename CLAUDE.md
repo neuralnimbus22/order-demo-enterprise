@@ -63,7 +63,7 @@ They do not share code, tokens, or a database table.
 | `tests/inventory/test_cache_consistency.py` | pytest. Healthy cache-aside; cache disagreeing with DB → 409 `DATA_INCONSISTENCY`; cache-miss → fallback to DB then repopulate. |
 | `tests/product-catalog/test_product_catalog.py` | pytest. `/health`, full `/products` list, known sku, 404 on unknown. Not wired into ci-tests.yml yet. |
 | `tests/user-session/test_user_session.py` | pytest. Register, login, and validate, with a unique email per run. Not wired into ci-tests.yml yet. |
-| `tests/load/order-load.js` | k6 load script. Ramps to 500 VUs against `POST /orders` to drive HPA scaling. SLOs: p95<800ms, failed<5%. |
+| `tests/load/order-load.js` | k6 load script. Ramps to 500 VUs against `POST /orders` to drive HPA scaling. Checks each response is `201 Created`. SLOs: p95<800ms, failed<5%, checks>95%. |
 | `.github/workflows/build-images.yml` | Builds the six service images multi-arch (linux/amd64 + linux/arm64) and pushes to GHCR. Trigger filtered to `services/**` + this file. |
 | `.github/workflows/ci-tests.yml` | Runs the four original service tests sequentially on the self-hosted runner against the live cluster. |
 | `scripts/deploy.sh` | **One-command bring-up.** namespace → Kafka + wait → pre-create BOTH topics → services + infra + HPA → wait for every Deployment Available → rollout-restart the kafkajs clients (order, payment, inventory) → sanity-check. Idempotent. |
