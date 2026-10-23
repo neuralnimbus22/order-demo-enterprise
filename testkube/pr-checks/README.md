@@ -15,7 +15,7 @@ Test Workflows that run for every pull request. Flux applies this folder to the 
 2. `pr-suite` runs each workflow labelled `pr-check=true` and passes the same three values on.
 3. Each workflow turns them into execution tags in `spec.execution.tags`, so every run carries `pr`, `sha` and `repo`.
 
-The GitHub check passes only when every test in the suite passes.
+The GitHub check passes only when every test in the suite passes. Its job summary links the suite run and the Testkube Executions view filtered on `pr=<number>`, which lists every run for that pull request across pushes.
 
 ## Tags
 
