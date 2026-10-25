@@ -1,0 +1,73 @@
+# Playwright UI journeys for a pull request.
+# The UI suite is owned by the UI repo and runs from its main branch.
+# The tags still record which pull request and commit the run was for.
+apiVersion: testworkflows.testkube.io/v1
+kind: TestWorkflow
+metadata:
+  name: pr-playwright
+  labels:
+    app: order-demo
+    tool: playwright
+    pr-check: "true"          # pr-suite runs every workflow with this label
+spec:
+  config:
+    pr:
+      type: string
+      default: manual
+      description: Pull request number
+    sha:
+      type: string
+      default: main
+      description: Commit to test
+    repo:
+      type: string
+      default: order-demo-enterprise
+      description: Repository of the pull request
+  execution:
+    target:
+      match:
+        name: [testkube-runner]   # the runner in the lab cluster, next to the services
+    tags:
+      pr: "{{ config.pr }}"
+      sha: "{{ config.sha }}"
+      repo: "{{ config.repo }}"
+  content:
+    git:
+      uri: https://github.com/neuralnimbus22/order-demo-ui
+      revision: main
+  container:
+    image: mcr.microsoft.com/playwright:v1.60.0-jammy   # matches @playwright/test in the UI repo
+    workingDir: /data/repo
+  steps:
+    - name: Install dependencies
+      shell: npm ci
+    - name: Run the UI journeys in 3 shards
+      parallel:
+        count: 3
+        transfer:
+          - from: /data/repo
+        fetch:
+          - from: /data/repo/blob-report
+            to: /data/reports
+        container:
+          env:
+            - name: E2E_BASE_URL
+              value: http://order-demo-ui.order-demo.svc.cluster.local:3000
+            - name: CI
+              value: "true"
+            - name: PW_SCREENSHOT
+              value: only-on-failure
+            - name: PW_VIDEO
+              value: retain-on-failure
+        shell: |
+          npx playwright test \
+            --project=chromium \
+            --reporter blob \
+            --shard {{ index + 1 }}/{{ count }}
+    - name: Merge the reports
+      condition: always
+      shell: npx playwright merge-reports --reporter=junit,html /data/reports > junit.xml
+      artifacts:
+        paths:
+          - playwright-report/**
+          - junit.xml

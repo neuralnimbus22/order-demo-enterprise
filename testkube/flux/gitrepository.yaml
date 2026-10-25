@@ -1,0 +1,12 @@
+# Flux source: this repository's main branch.
+# The repository is public, so no credentials are needed.
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: GitRepository
+metadata:
+  name: order-demo-enterprise
+  namespace: flux-system
+spec:
+  interval: 1m
+  url: https://github.com/neuralnimbus22/order-demo-enterprise
+  ref:
+    branch: main

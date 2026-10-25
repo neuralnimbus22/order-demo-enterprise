@@ -66,11 +66,14 @@ They do not share code, tokens, or a database table.
 | `tests/load/order-load.js` | k6 load script. Ramps to 500 VUs against `POST /orders` to drive HPA scaling. SLOs: p95<800ms, failed<5%. |
 | `.github/workflows/build-images.yml` | Builds the six service images multi-arch (linux/amd64 + linux/arm64) and pushes to GHCR. Trigger filtered to `services/**` + this file. |
 | `.github/workflows/ci-tests.yml` | Runs the four original service tests sequentially on the self-hosted runner against the live cluster. |
+| `.github/workflows/pr-tests.yml` | On every pull request, starts the Testkube workflow `pr-suite` with the pull request number, head commit and repository as config, and waits for the result. Needs the `TESTKUBE_API_TOKEN` repository secret. |
 | `scripts/deploy.sh` | **One-command bring-up.** namespace → Kafka + wait → pre-create BOTH topics → services + infra + HPA → wait for every Deployment Available → rollout-restart the kafkajs clients (order, payment, inventory) → sanity-check. Idempotent. |
 | `scripts/sanity-check.sh` | Per-deployment health + topic existence + topic high-water-mark. `[OK]/[WARN]/[FAIL]` markers. |
 | `scripts/place-order.sh` | Healthy-path helper: place one order, confirm inventory processed it. |
 | `scripts/smoke-test.sh` | **Read-only smoke test of the live backend.** Deployments healthy, both Kafka topics exist, Redis PING, `/health` on all six services, inventory `/db/health`, product-catalog `/products` non-empty, and a user-session register → login → validate round-trip. Exits non-zero on any failure so it can gate a pipeline. |
 | `testkube/samples/` | Commented reference TestWorkflows (pytest-auth, k6-load-sharded, playwright-ui). |
+| `testkube/pr-checks/` | Pull request Test Workflows: `pr-suite` runs every workflow labelled `pr-check=true` (`pr-playwright`, `pr-k6`, `pr-custom-checkout`) and each run is tagged `pr`, `sha` and `repo`. Applied to the cluster by Flux. |
+| `testkube/flux/` | Flux `GitRepository` (this repo, `main`) and `Kustomization` (applies `./testkube/pr-checks` into namespace `testkube`, where the Testkube runner watches and syncs to the control plane). `bootstrap.sh [context]` brings it all up from Git with `kubectl` only: `flux-helmchart.yaml` (k3s installs Flux from the pinned chart), then the two objects, then waits for the workflows. |
 
 ## How to run / deploy
 **Build images locally** (tag with the GHCR path so `IfNotPresent` uses your local build without pulling):

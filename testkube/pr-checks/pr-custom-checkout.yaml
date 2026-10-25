@@ -1,0 +1,60 @@
+# Custom test for a pull request: the checkout journey in pytest.
+# The test code comes from the pull request's own commit (config.sha).
+apiVersion: testworkflows.testkube.io/v1
+kind: TestWorkflow
+metadata:
+  name: pr-custom-checkout
+  labels:
+    app: order-demo
+    tool: pytest
+    pr-check: "true"          # pr-suite runs every workflow with this label
+spec:
+  config:
+    pr:
+      type: string
+      default: manual
+      description: Pull request number
+    sha:
+      type: string
+      default: main
+      description: Commit to test
+    repo:
+      type: string
+      default: order-demo-enterprise
+      description: Repository of the pull request
+  execution:
+    target:
+      match:
+        name: [testkube-runner]   # the runner in the lab cluster, next to the services
+    tags:
+      pr: "{{ config.pr }}"
+      sha: "{{ config.sha }}"
+      repo: "{{ config.repo }}"
+  content:
+    git:
+      uri: https://github.com/neuralnimbus22/order-demo-enterprise
+      revision: "{{ config.sha }}"
+      paths:
+        - tests/checkout
+  container:
+    image: python:3.12-slim
+    workingDir: /data/repo/tests/checkout
+    env:
+      - name: ORDER_URL
+        value: http://order.order-demo.svc.cluster.local:3002
+      - name: PAYMENT_URL
+        value: http://payment.order-demo.svc.cluster.local:3004
+      - name: INVENTORY_URL
+        value: http://inventory.order-demo.svc.cluster.local:3003
+  steps:
+    - name: Install test dependencies
+      shell: |
+        python -m venv /data/venv
+        /data/venv/bin/pip install --quiet --disable-pip-version-check -r requirements.txt
+    - name: Run the checkout journey
+      shell: /data/venv/bin/pytest test_checkout_journey.py -v -rs --junitxml=/data/artifacts/junit.xml
+    - name: Save the test report
+      condition: always
+      artifacts:
+        paths:
+          - /data/artifacts/**

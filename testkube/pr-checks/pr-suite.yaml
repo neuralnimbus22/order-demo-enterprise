@@ -1,0 +1,45 @@
+# Every test tied to one pull request, as one run.
+# Runs each workflow labelled pr-check=true in parallel and passes them the
+# pull request number, commit and repository. Each of them turns those into
+# execution tags, so every run carries pr, sha and repo.
+apiVersion: testworkflows.testkube.io/v1
+kind: TestWorkflow
+metadata:
+  name: pr-suite
+  labels:
+    app: order-demo
+    suite: pr-checks
+spec:
+  config:
+    pr:
+      type: string
+      default: manual
+      description: Pull request number
+    sha:
+      type: string
+      default: main
+      description: Commit to test
+    repo:
+      type: string
+      default: order-demo-enterprise
+      description: Repository of the pull request
+  execution:
+    target:
+      match:
+        name: [testkube-runner]
+    tags:
+      pr: "{{ config.pr }}"
+      sha: "{{ config.sha }}"
+      repo: "{{ config.repo }}"
+  steps:
+    - name: Run every test for this pull request
+      execute:
+        parallelism: 3
+        workflows:
+          - selector:
+              matchLabels:
+                pr-check: "true"
+            config:
+              pr: "{{ config.pr }}"
+              sha: "{{ config.sha }}"
+              repo: "{{ config.repo }}"
