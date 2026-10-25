@@ -73,7 +73,7 @@ They do not share code, tokens, or a database table.
 | `scripts/smoke-test.sh` | **Read-only smoke test of the live backend.** Deployments healthy, both Kafka topics exist, Redis PING, `/health` on all six services, inventory `/db/health`, product-catalog `/products` non-empty, and a user-session register → login → validate round-trip. Exits non-zero on any failure so it can gate a pipeline. |
 | `testkube/samples/` | Commented reference TestWorkflows (pytest-auth, k6-load-sharded, playwright-ui). |
 | `testkube/pr-checks/` | Pull request Test Workflows: `pr-suite` runs every workflow labelled `pr-check=true` (`pr-playwright`, `pr-k6`, `pr-custom-checkout`) and each run is tagged `pr`, `sha` and `repo`. Applied to the cluster by Flux. |
-| `testkube/flux/` | Flux `GitRepository` (this repo, `main`) and `Kustomization` (applies `./testkube/pr-checks` into namespace `testkube`, where the Testkube runner watches and syncs to the control plane). `bootstrap.sh [context]` brings it all up from Git: Flux from the pinned Helm chart (`flux-values.yaml`), then the two objects, then waits for the workflows. |
+| `testkube/flux/` | Flux `GitRepository` (this repo, `main`) and `Kustomization` (applies `./testkube/pr-checks` into namespace `testkube`, where the Testkube runner watches and syncs to the control plane). `bootstrap.sh [context]` brings it all up from Git: the Flux Operator from its pinned Helm chart, Flux from `flux-instance.yaml`, then the two objects, then waits for the workflows. |
 
 ## How to run / deploy
 **Build images locally** (tag with the GHCR path so `IfNotPresent` uses your local build without pulling):
