@@ -1,0 +1,16 @@
+# Where Flux gets the Flux Operator chart: the chart's OCI artifact on ghcr.io,
+# pinned to one version. The operator adds ResourceSets, which can watch the
+# pull requests of a repository (see ../pr-watch/).
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: OCIRepository
+metadata:
+  name: flux-operator
+  namespace: flux-system
+spec:
+  interval: 1h
+  url: oci://ghcr.io/controlplaneio-fluxcd/charts/flux-operator
+  ref:
+    tag: "0.61.0"   # charts/flux-operator/Chart.yaml in github.com/controlplaneio-fluxcd/charts
+  layerSelector:
+    mediaType: "application/vnd.cncf.helm.chart.content.v1.tar+gzip"
+    operation: copy

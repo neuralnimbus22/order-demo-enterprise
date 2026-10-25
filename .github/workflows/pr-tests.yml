@@ -1,16 +1,23 @@
-name: PR tests
+name: PR tests (manual)
 
-# Runs every test tied to a pull request in Testkube, as one suite:
+# Starts every test tied to a pull request in Testkube, as one suite, by hand:
 # Playwright UI journeys, a k6 load check and the custom checkout journey.
-# The suite and every test in it are tagged with the pull request number,
-# the commit and the repository, so Testkube can show them in one view.
+# Pull requests start the same suite through Flux on their own (see
+# testkube/flux/pr-watch/), so this workflow no longer runs on pull requests.
+# It shows the same call made from a pipeline step.
 #
 # Needs one repository secret: TESTKUBE_API_TOKEN, an API token for the
 # Testkube environment below.
 
 on:
-  pull_request:
-    types: [opened, synchronize, reopened]
+  workflow_dispatch:
+    inputs:
+      pr:
+        description: Pull request number
+        required: true
+      sha:
+        description: Commit to test, the pull request's head commit
+        required: true
 
 permissions:
   contents: read
@@ -25,8 +32,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     env:
-      PR: ${{ github.event.pull_request.number }}
-      SHA: ${{ github.event.pull_request.head.sha }}
+      PR: ${{ inputs.pr }}
+      SHA: ${{ inputs.sha }}
       REPO: ${{ github.event.repository.name }}
     steps:
       - name: Check the Testkube token is set

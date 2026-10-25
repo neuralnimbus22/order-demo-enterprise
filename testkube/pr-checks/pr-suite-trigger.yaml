@@ -1,0 +1,33 @@
+# Starts pr-suite for every open pull request that Flux reports.
+# The Flux Operator writes one ConfigMap per open pull request (see
+# ../flux/pr-watch/). When that ConfigMap is created, or changes because the
+# pull request got a new commit, this trigger runs pr-suite with the pull
+# request number, the commit and the repository taken from the ConfigMap.
+apiVersion: tests.testkube.io/v1
+kind: TestTrigger
+metadata:
+  name: pr-suite-on-pull-request
+  namespace: testkube
+  labels:
+    app: order-demo
+spec:
+  resource: configmap
+  resourceSelector:
+    namespace: testkube
+    labelSelector:
+      matchLabels:
+        pr-request: "true"          # the label the Flux Operator puts on each ConfigMap
+  events: [created, modified]       # a new pull request, or a new commit on one
+  action: run
+  execution: testworkflow
+  testSelector:
+    name: pr-suite
+  actionParameters:
+    config:
+      pr: jsonpath={.data.pr}       # pull request number
+      sha: jsonpath={.data.sha}     # head commit of the pull request
+      repo: jsonpath={.data.repo}   # repository name
+  listener:
+    match:
+      name: [testkube-runner]       # the lab cluster's runner watches for the ConfigMaps
+  concurrencyPolicy: allow

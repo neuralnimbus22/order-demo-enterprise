@@ -1,15 +1,29 @@
 # testkube/flux/
 
-Everything that brings [`../pr-checks/`](../pr-checks/) up on a cluster from Git, and keeps it applied.
+Everything that brings [`../pr-checks/`](../pr-checks/) up on a cluster from Git, keeps it applied, and starts it for every pull request.
 
 | File | What it is |
 |---|---|
-| `bootstrap.sh` | One command: applies the three files below in order and waits until Flux has applied the workflows |
+| `bootstrap.sh` | One command: installs Flux, applies the Flux objects below, and waits until Flux has applied every folder |
 | `flux-helmchart.yaml` | `HelmChart`: Flux, pinned to one chart version. The cluster's own Helm controller installs it |
 | `gitrepository.yaml` | `GitRepository`: reads `main` of this repository every minute |
-| `pr-checks-kustomization.yaml` | `Kustomization`: applies `./testkube/pr-checks` into the `testkube` namespace every minute, and removes workflows that were deleted from Git |
+| `pr-checks-kustomization.yaml` | `Kustomization`: applies `./testkube/pr-checks` (the workflows and the trigger) into the `testkube` namespace every minute, and removes what was deleted from Git |
+| `flux-operator-kustomization.yaml` | `Kustomization`: applies `./operator/` |
+| `operator/` | The Flux Operator chart (`OCIRepository`) and its `HelmRelease`. The operator adds ResourceSets, which can watch the pull requests of a repository |
+| `pr-watch-kustomization.yaml` | `Kustomization`: applies `./pr-watch/`, after the operator is running |
+| `pr-watch/pull-requests.yaml` | `ResourceSetInputProvider`: reads the open pull requests of this repository every 2 minutes |
+| `pr-watch/pr-requests.yaml` | `ResourceSet`: keeps one ConfigMap, `pr-<number>`, per open pull request in `testkube`, with its number and head commit |
 
-The Testkube runner in the cluster watches the `testkube` namespace and copies every Test Workflow it finds there to the Testkube control plane. The copy goes one way. A change made in the dashboard is not written back, and the next sync replaces it with what is in Git.
+The Testkube runner in the cluster watches the `testkube` namespace and copies every Test Workflow and trigger it finds there to the Testkube control plane. The copy goes one way. A change made in the dashboard is not written back, and the next sync replaces it with what is in Git.
+
+## How a pull request starts its tests
+
+1. Flux sees a new pull request, or a new commit on one, within 2 minutes.
+2. Flux creates or changes the ConfigMap `pr-<number>` in `testkube`.
+3. The Testkube trigger `pr-suite-on-pull-request` runs `pr-suite` with the number and commit from the ConfigMap.
+4. Every run is tagged `pr`, `sha` and `repo`, so one filter shows every test for that pull request.
+
+The same setup reads Azure Repos: set `type: AzureDevOpsPullRequest` and the repository URL in `pr-watch/pull-requests.yaml`, with a token Secret in `secretRef`.
 
 ## Bring it up
 
@@ -21,29 +35,28 @@ testkube/flux/bootstrap.sh default
 
 It needs `kubectl`, a k3s or k3d cluster, and a Testkube runner with gitops enabled in the `testkube` namespace. It is safe to run again: anything that already matches is left as it is.
 
-Each step is a controller doing its own job, with nothing run by hand in between:
-
-1. The k3s Helm controller sees the `HelmChart` and installs Flux in the Job `kube-system/helm-install-flux`.
-2. Flux reads `main` and applies `./testkube/pr-checks` into `testkube`.
-3. The Testkube runner copies those workflows to the control plane.
-
 | Value | Where it comes from |
 |---|---|
 | Chart `flux2` from `https://fluxcd-community.github.io/helm-charts`, version `2.19.1` | `charts/flux2/Chart.yaml` in [fluxcd-community/helm-charts](https://github.com/fluxcd-community/helm-charts); it ships Flux 2.9.5 |
 | `HelmChart` in `kube-system` | Where k3s keeps its own HelmChart objects (Traefik's is there too) |
-| Controllers `source`, `kustomize`, `helm` | `source` reads Git and `kustomize` applies it. `helm` is there for a later step that installs charts as HelmReleases |
-| Namespace `flux-system` | `targetNamespace` of the `HelmChart`, and where both Flux objects in this folder live |
-| Namespace `testkube` | `targetNamespace` in `pr-checks-kustomization.yaml`, and where the runner is installed |
+| Controllers `source`, `kustomize`, `helm` | `source` reads Git and charts, `kustomize` applies folders, `helm` installs the Flux Operator chart |
+| Chart `oci://ghcr.io/controlplaneio-fluxcd/charts/flux-operator`, tag `0.61.0` | `charts/flux-operator/Chart.yaml` in [controlplaneio-fluxcd/charts](https://github.com/controlplaneio-fluxcd/charts) |
+| `type: GitHubPullRequest` | The [ResourceSetInputProvider](https://fluxoperator.dev/docs/crd/resourcesetinputprovider/) type for GitHub pull requests. It exports `id`, `sha`, `branch`, `author` and `title` |
+| `reconcileEvery: "2m"` | Without a token, GitHub allows 60 API calls an hour from one address. Every 2 minutes stays under that |
+| Label `pr-request: "true"` | Set on each ConfigMap in `pr-watch/pr-requests.yaml`, and selected on by the trigger in `../pr-checks/pr-suite-trigger.yaml` |
+| `listener: testkube-runner` | The lab cluster's runner, the one that sees the ConfigMaps |
+| Namespace `flux-system` | Where Flux, the operator and the Flux objects live |
+| Namespace `testkube` | Where the runner is installed and watches. The workflows, the trigger and the ConfigMaps go there |
 | Context `default` | The lab cluster's context name in the kubeconfig |
 
-On a cluster that is not k3s or k3d, install the same chart, version and values with `helm`, then apply the two Flux objects.
+On a cluster that is not k3s or k3d, install the same Flux chart, version and values with `helm`, then apply the Flux objects.
 
-After the first run, nothing is applied by hand. A merge to `main` is the only way to change the workflows in the cluster.
+After the first run, nothing is applied by hand. A merge to `main` is the only way to change what runs in the cluster.
 
 ## Check
 
 ```bash
-kubectl -n kube-system get helmchart flux
-kubectl -n flux-system get gitrepositories,kustomizations
-kubectl -n testkube get testworkflows -l kustomize.toolkit.fluxcd.io/name=pr-checks
+kubectl -n flux-system get kustomizations,resourcesetinputproviders,resourcesets
+kubectl -n testkube get testworkflows,testtriggers -l kustomize.toolkit.fluxcd.io/name=pr-checks
+kubectl -n testkube get configmaps -l pr-request=true
 ```

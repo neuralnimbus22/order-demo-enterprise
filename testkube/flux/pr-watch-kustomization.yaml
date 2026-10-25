@@ -1,0 +1,17 @@
+# Flux applies ./testkube/flux/pr-watch: what reads the open pull requests and
+# writes one ConfigMap per pull request. It waits for the operator first,
+# because the ResourceSet kinds come with the operator.
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: pr-watch
+  namespace: flux-system
+spec:
+  dependsOn:
+    - name: flux-operator
+  interval: 1m
+  sourceRef:
+    kind: GitRepository
+    name: order-demo-enterprise
+  path: ./testkube/flux/pr-watch
+  prune: true

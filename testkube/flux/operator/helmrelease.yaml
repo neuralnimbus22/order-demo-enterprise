@@ -1,0 +1,21 @@
+# Flux installs the Flux Operator from the chart above, into flux-system.
+# Only its ResourceSet controller is used here. Flux itself stays as
+# installed by ../flux-helmchart.yaml.
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: flux-operator
+  namespace: flux-system
+spec:
+  interval: 1h
+  releaseName: flux-operator
+  chartRef:
+    kind: OCIRepository
+    name: flux-operator
+  install:
+    crds: CreateReplace
+  upgrade:
+    crds: CreateReplace
+  values:
+    web:
+      enabled: false   # the Flux status web UI; not used in this lab
