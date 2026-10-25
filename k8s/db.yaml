@@ -3,6 +3,9 @@ kind: PersistentVolumeClaim
 metadata:
   name: db-data
   namespace: order-demo
+  annotations:
+    # Argo CD sync wave -2: Postgres starts with Kafka and Redis, before the services (wave 0).
+    argocd.argoproj.io/sync-wave: "-2"
   labels:
     app: db
 spec:
@@ -18,6 +21,8 @@ kind: Deployment
 metadata:
   name: db
   namespace: order-demo
+  annotations:
+    argocd.argoproj.io/sync-wave: "-2"
   labels:
     app: db
 spec:
@@ -74,6 +79,8 @@ kind: Service
 metadata:
   name: db
   namespace: order-demo
+  annotations:
+    argocd.argoproj.io/sync-wave: "-2"
   labels:
     app: db
 spec:

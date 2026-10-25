@@ -2,5 +2,8 @@ apiVersion: v1
 kind: Namespace
 metadata:
   name: order-demo
+  annotations:
+    # Argo CD sync wave -2: before everything else. Argo CD applies a Namespace first within its wave.
+    argocd.argoproj.io/sync-wave: "-2"
   labels:
     name: order-demo

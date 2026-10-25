@@ -1,0 +1,50 @@
+# Creates the two Kafka topics the services need, the same job as step 3 of
+# scripts/deploy.sh. Under Argo CD it runs during every sync:
+#   wave -2  namespace, Kafka, Postgres and Redis. Argo CD waits until they are ready
+#   wave -1  this Job runs and must succeed
+#   wave 0   everything with no wave set: the six services and the HPA
+# Because the services start after this Job, the kafkajs clients connect on the
+# first try, so the rollout restart in deploy.sh step 6 is not needed here.
+# deploy.sh still works as before. kubectl ignores the Argo CD annotations, and
+# --if-not-exists makes the topic creation safe to repeat.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: kafka-topics
+  namespace: order-demo
+  labels:
+    app: kafka-topics
+  annotations:
+    argocd.argoproj.io/hook: Sync
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation
+    argocd.argoproj.io/sync-wave: "-1"
+spec:
+  backoffLimit: 3
+  activeDeadlineSeconds: 300
+  template:
+    metadata:
+      labels:
+        app: kafka-topics
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: create-topics
+          # Same image as the broker, so kafka-topics.sh matches its version.
+          image: apache/kafka:3.7.0
+          imagePullPolicy: IfNotPresent
+          command: ["sh", "-c"]
+          args:
+            - |
+              BROKER=kafka.order-demo.svc.cluster.local:9092
+              TOOLS=/opt/kafka/bin
+              until $TOOLS/kafka-topics.sh --bootstrap-server "$BROKER" --list >/dev/null 2>&1; do
+                echo "waiting for Kafka at $BROKER"
+                sleep 3
+              done
+              for TOPIC in order-placed payment-confirmed; do
+                $TOOLS/kafka-topics.sh --bootstrap-server "$BROKER" \
+                  --create --if-not-exists --topic "$TOPIC" \
+                  --partitions 1 --replication-factor 1
+              done
+              echo "topics now on the broker:"
+              $TOOLS/kafka-topics.sh --bootstrap-server "$BROKER" --list
