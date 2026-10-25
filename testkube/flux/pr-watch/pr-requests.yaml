@@ -1,0 +1,28 @@
+# For each open pull request, Flux keeps one ConfigMap in the testkube
+# namespace: pr-<number>, holding the pull request number and its head commit.
+# A new pull request creates it. A new commit on the pull request changes it.
+# A closed pull request removes it.
+# The Testkube trigger in ../../pr-checks/pr-suite-trigger.yaml watches these
+# ConfigMaps and runs pr-suite with their values.
+apiVersion: fluxcd.controlplane.io/v1
+kind: ResourceSet
+metadata:
+  name: order-demo-pr-requests
+  namespace: flux-system
+spec:
+  inputsFrom:
+    - kind: ResourceSetInputProvider
+      name: order-demo-pull-requests
+  resources:
+    - apiVersion: v1
+      kind: ConfigMap
+      metadata:
+        name: pr-<< inputs.id >>
+        namespace: testkube
+        labels:
+          pr-request: "true"   # the label the Testkube trigger selects on
+      data:                    # quote keeps each value a string, as a ConfigMap needs
+        pr: << inputs.id | quote >>
+        sha: << inputs.sha | quote >>
+        branch: << inputs.branch | quote >>
+        repo: order-demo-enterprise

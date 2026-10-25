@@ -1,0 +1,17 @@
+# Flux reads the open pull requests of this repository every 2 minutes.
+# Each open pull request becomes one input set: id (the pull request number),
+# sha (its head commit), branch, author and title.
+# The repository is public, so no token is needed. Without a token, GitHub
+# allows 60 API calls an hour from one address, which 2 minutes stays under.
+apiVersion: fluxcd.controlplane.io/v1
+kind: ResourceSetInputProvider
+metadata:
+  name: order-demo-pull-requests
+  namespace: flux-system
+  annotations:
+    fluxcd.controlplane.io/reconcileEvery: "2m"
+spec:
+  type: GitHubPullRequest      # AzureDevOpsPullRequest reads Azure Repos the same way
+  url: https://github.com/neuralnimbus22/order-demo-enterprise
+  filter:
+    limit: 20                  # at most 20 open pull requests at a time
