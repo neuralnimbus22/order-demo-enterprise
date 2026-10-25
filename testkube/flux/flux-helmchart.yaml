@@ -1,0 +1,26 @@
+# Flux, installed by the cluster's own Helm controller.
+# k3s and k3d watch HelmChart objects and run the Helm install as a Job in the
+# cluster (kube-system/helm-install-flux), so no laptop and no helm CLI are
+# needed. bootstrap.sh applies this file first.
+apiVersion: helm.cattle.io/v1
+kind: HelmChart
+metadata:
+  name: flux
+  namespace: kube-system   # where k3s keeps its HelmChart objects
+spec:
+  repo: https://fluxcd-community.github.io/helm-charts
+  chart: flux2
+  version: 2.19.1          # ships Flux 2.9.5 (charts/flux2/Chart.yaml in fluxcd-community/helm-charts)
+  targetNamespace: flux-system
+  createNamespace: true
+  valuesContent: |-
+    # Reading Git and applying a folder needs source-controller (reads the
+    # repository) and kustomize-controller (applies the folder).
+    # helm-controller stays on for a later step that installs charts as
+    # HelmReleases. The rest are off to keep the lab small.
+    imageAutomationController:
+      create: false   # writes new image tags back to Git; not used here
+    imageReflectionController:
+      create: false   # scans registries for new image tags; not used here
+    notificationController:
+      create: false   # sends Flux events to Slack or webhooks; not used here
