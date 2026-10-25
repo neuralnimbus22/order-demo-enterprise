@@ -21,8 +21,8 @@ spec:
         namespace: testkube
         labels:
           pr-request: "true"   # the label the Testkube trigger selects on
-      data:
-        pr: "<< inputs.id >>"
-        sha: "<< inputs.sha >>"
-        branch: "<< inputs.branch >>"
+      data:                    # quote keeps each value a string, as a ConfigMap needs
+        pr: << inputs.id | quote >>
+        sha: << inputs.sha | quote >>
+        branch: << inputs.branch | quote >>
         repo: order-demo-enterprise
