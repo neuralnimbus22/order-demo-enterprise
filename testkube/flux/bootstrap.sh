@@ -25,9 +25,12 @@ set -e -o pipefail
 CONTEXT="${1:-default}"
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-# The Flux chart, pinned. The version is charts/flux2/Chart.yaml in
-# github.com/fluxcd-community/helm-charts, which ships Flux 2.9.5.
-FLUX_CHART="oci://ghcr.io/fluxcd-community/charts/flux2"
+# The Flux chart, pinned. Version 2.19.1 ships Flux 2.9.5
+# (charts/flux2/Chart.yaml in github.com/fluxcd-community/helm-charts).
+# Pulled from the chart repository's index. The OCI copy on ghcr.io refuses
+# anonymous pulls, so it is not used.
+FLUX_CHART_REPO="https://fluxcd-community.github.io/helm-charts"
+FLUX_CHART="flux2"
 FLUX_CHART_VERSION="2.19.1"
 FLUX_NAMESPACE="flux-system"
 TESTKUBE_NAMESPACE="testkube"
@@ -50,6 +53,7 @@ ok "kubectl, helm and the $TESTKUBE_NAMESPACE namespace are there"
 # --- 1. Flux ---------------------------------------------------------------
 section "1. Flux from the pinned Helm chart ($FLUX_CHART_VERSION)"
 helm upgrade --install flux "$FLUX_CHART" \
+  --repo "$FLUX_CHART_REPO" \
   --version "$FLUX_CHART_VERSION" \
   --namespace "$FLUX_NAMESPACE" --create-namespace \
   --values "$HERE/flux-values.yaml" \

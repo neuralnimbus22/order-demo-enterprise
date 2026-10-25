@@ -23,7 +23,7 @@ It needs `kubectl`, `helm`, and a Testkube runner with gitops enabled in the `te
 
 | Value | Where it comes from |
 |---|---|
-| Chart `oci://ghcr.io/fluxcd-community/charts/flux2`, version `2.19.1` | `charts/flux2/Chart.yaml` in [fluxcd-community/helm-charts](https://github.com/fluxcd-community/helm-charts); it ships Flux 2.9.5 |
+| Chart `flux2` from `https://fluxcd-community.github.io/helm-charts`, version `2.19.1` | `charts/flux2/Chart.yaml` in [fluxcd-community/helm-charts](https://github.com/fluxcd-community/helm-charts); it ships Flux 2.9.5. The same chart is also pushed to `ghcr.io`, but that copy refuses anonymous pulls |
 | Namespace `flux-system` | Where both Flux objects in this folder live |
 | Namespace `testkube` | `targetNamespace` in `pr-checks-kustomization.yaml`, and where the runner is installed |
 | Context `default` | The lab cluster's context name in the kubeconfig |

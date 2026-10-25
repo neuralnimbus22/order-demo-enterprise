@@ -1,4 +1,5 @@
-# Values for the Flux Helm chart, fluxcd-community/flux2 2.19.1 (Flux 2.9.5).
+# Values for the Flux Helm chart flux2 2.19.1 (Flux 2.9.5), from
+# https://fluxcd-community.github.io/helm-charts.
 # bootstrap.sh installs the chart with this file.
 #
 # Reading Git and applying a folder needs two controllers:
