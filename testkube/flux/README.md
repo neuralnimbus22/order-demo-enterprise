@@ -53,6 +53,22 @@ On a cluster that is not k3s or k3d, install the same Flux chart, version and va
 
 After the first run, nothing is applied by hand. A merge to `main` is the only way to change what runs in the cluster.
 
+## Look at Flux in a browser
+
+The Flux Operator serves a status page on port 9080. From your Mac:
+
+```bash
+kubectl --context default -n flux-system port-forward svc/flux-operator 9080:9080
+```
+
+Then open http://localhost:9080. It shows every Flux object and its state: the `GitRepository`, the three `Kustomization`s, the operator's `HelmRelease`, and the pull request watch. It is read-only and has no sign-in, and it does not show Secrets or ConfigMaps. Press Ctrl+C in the terminal to stop the port-forward.
+
+| Value | Where it comes from |
+|---|---|
+| `svc/flux-operator` | The Service the Flux Operator chart creates, named after the release `flux-operator` in `operator/helmrelease.yaml` |
+| `9080:9080` | `web.enabled: true` in `operator/helmrelease.yaml` adds port 9080 to that Service |
+| `--context default` | The lab cluster's context name in the kubeconfig |
+
 ## Check
 
 ```bash
