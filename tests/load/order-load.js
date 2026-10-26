@@ -3,7 +3,8 @@
 // Horizontal Pod Autoscaler on the deployment will scale it out.
 //
 // Profile:  ramp 0→50 VUs over 1m, hold 50 VUs for 3m, ramp down to 0 over 1m.
-// SLOs   :  p95 latency < 800ms, request failure rate < 5%.
+// SLOs   :  p95 latency < 800ms, request failure rate < 5%, and at least
+//           95% of orders answered with 201 Created.
 //
 // Each iteration posts a unique-id order so the consumer doesn't deduplicate
 // or hot-spot on a single key.
@@ -12,7 +13,7 @@
 //   ORDER_URL=http://localhost:3002 k6 run tests/load/order-load.js
 
 import http from 'k6/http';
-import { sleep } from 'k6';
+import { check, sleep } from 'k6';
 
 const BASE = __ENV.ORDER_URL || 'http://localhost:3002';
 
@@ -25,6 +26,7 @@ export const options = {
   thresholds: {
     http_req_duration: ['p(95)<800'],
     http_req_failed: ['rate<0.05'],
+    checks: ['rate>0.95'],
   },
 };
 
@@ -34,8 +36,13 @@ export default function () {
   const id = `load-vu${__VU}-it${__ITER}-${Date.now()}`;
   const body = JSON.stringify({ id, item: 'widget', qty: 1 });
 
-  http.post(`${BASE}/orders`, body, {
+  const res = http.post(`${BASE}/orders`, body, {
     headers: { 'Content-Type': 'application/json' },
+  });
+
+  // A fast error is still an error: count an order only when it was placed.
+  check(res, {
+    'order placed (201)': (r) => r.status === 201,
   });
 
   sleep(0.1);
