@@ -18,4 +18,5 @@ spec:
     crds: CreateReplace
   values:
     web:
-      enabled: false   # the Flux status web UI; not used in this lab
+      enabled: true    # the Flux status web page on port 9080: read-only, no sign-in,
+                       # reached only through kubectl port-forward (see ../README.md)
