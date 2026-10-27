@@ -1,0 +1,115 @@
+# Shared Microcks for the mock-services-microcks workflow.
+#
+# Why shared and not per-run Testkube services: Microcks reads ASYNC_MINION_URL
+# once at startup, and the uber async minion opens a WebSocket to
+# MICROCKS_HOST_PORT at startup and exits if Microcks is not there. Each side
+# needs the other's address before it starts, and Testkube service IPs are only
+# known after start. Stable Service DNS names here break that cycle.
+#
+# Kafka stays per run: the minion's Kafka test consumer takes the broker from
+# the test endpoint (kafka://<broker>/<topic>), not from its own settings.
+#
+# Apply: kubectl apply -f testkube/mock-services/microcks-shared.yaml
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: mock-services
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: microcks
+  namespace: mock-services
+  labels:
+    app: microcks
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: microcks
+  template:
+    metadata:
+      labels:
+        app: microcks
+    spec:
+      containers:
+        - name: microcks
+          image: quay.io/microcks/microcks-uber:1.15.0
+          env:
+            - name: ASYNC_MINION_URL
+              value: http://microcks-async-minion.mock-services.svc.cluster.local:8081
+          ports:
+            - containerPort: 8080
+          readinessProbe:
+            tcpSocket:
+              port: 8080
+            periodSeconds: 5
+          resources:
+            requests:
+              cpu: 250m
+              memory: 512Mi
+            limits:
+              memory: 1Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: microcks
+  namespace: mock-services
+spec:
+  selector:
+    app: microcks
+  ports:
+    - name: http
+      port: 8080
+      targetPort: 8080
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: microcks-async-minion
+  namespace: mock-services
+  labels:
+    app: microcks-async-minion
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: microcks-async-minion
+  template:
+    metadata:
+      labels:
+        app: microcks-async-minion
+    spec:
+      containers:
+        - name: microcks-async-minion
+          image: quay.io/microcks/microcks-uber-async-minion:1.15.0
+          env:
+            # Exits if Microcks is unreachable at startup; Kubernetes restarts it until Microcks is up.
+            - name: MICROCKS_HOST_PORT
+              value: microcks.mock-services.svc.cluster.local:8080
+          ports:
+            - containerPort: 8081
+          readinessProbe:
+            tcpSocket:
+              port: 8081
+            periodSeconds: 5
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              memory: 512Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: microcks-async-minion
+  namespace: mock-services
+spec:
+  selector:
+    app: microcks-async-minion
+  ports:
+    - name: http
+      port: 8081
+      targetPort: 8081

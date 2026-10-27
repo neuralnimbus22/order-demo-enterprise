@@ -1,0 +1,50 @@
+# The order-placed event that order-service publishes and inventory-service consumes.
+# Source: tests/contract/pacts/inventory-service-order-service.json ({id,item,qty,at})
+# and services/order/server.js (sku is added only when the order had one).
+# Microcks runs its async contract test against this file, so the service
+# name it reports is "order-placed:1.0.0".
+asyncapi: 2.6.0
+info:
+  title: order-placed
+  version: 1.0.0
+  description: Published by order-service after auth-service authorizes an order.
+channels:
+  order-placed:
+    subscribe:
+      operationId: receiveOrderPlaced
+      summary: An order was placed
+      message:
+        $ref: '#/components/messages/OrderPlaced'
+components:
+  messages:
+    OrderPlaced:
+      name: OrderPlaced
+      contentType: application/json
+      payload:
+        $ref: '#/components/schemas/OrderPlaced'
+      examples:
+        - name: order-with-sku
+          payload:
+            id: order-abc-123
+            item: Hardcover Notebook
+            qty: 1
+            at: '2026-07-04T15:51:20.164Z'
+            sku: BK-001
+  schemas:
+    OrderPlaced:
+      type: object
+      required: [id, item, qty, at]
+      properties:
+        id:
+          type: string
+          description: Order correlation key. inventory-service reads only this field.
+        item:
+          type: string
+        qty:
+          type: integer
+        at:
+          type: string
+          format: date-time
+        sku:
+          type: string
+          description: Present only when the order was placed with a sku.

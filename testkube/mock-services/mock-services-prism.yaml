@@ -1,0 +1,110 @@
+kind: TestWorkflow
+apiVersion: testworkflows.testkube.io/v1
+metadata:
+  name: mock-services-prism
+  labels:
+    ticket: TSE-854
+    mocks: prism
+spec:
+  config:
+    branch:
+      type: string
+      default: mock-services-demo
+  content:
+    git:
+      uri: https://github.com/neuralnimbus22/order-demo-enterprise
+      revision: '{{config.branch}}'
+  container:
+    workingDir: /data/repo
+  services:
+    kafka:
+      image: apache/kafka:3.7.0
+      env:
+      - name: KAFKA_NODE_ID
+        value: "1"
+      - name: KAFKA_PROCESS_ROLES
+        value: broker,controller
+      - name: KAFKA_CONTROLLER_QUORUM_VOTERS
+        value: 1@localhost:9093
+      - name: KAFKA_LISTENERS
+        value: PLAINTEXT://0.0.0.0:9092,CONTROLLER://0.0.0.0:9093
+      - name: KAFKA_LISTENER_SECURITY_PROTOCOL_MAP
+        value: PLAINTEXT:PLAINTEXT,CONTROLLER:PLAINTEXT
+      - name: KAFKA_CONTROLLER_LISTENER_NAMES
+        value: CONTROLLER
+      - name: KAFKA_INTER_BROKER_LISTENER_NAME
+        value: PLAINTEXT
+      - name: KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR
+        value: "1"
+      - name: KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR
+        value: "1"
+      - name: KAFKA_TRANSACTION_STATE_LOG_MIN_ISR
+        value: "1"
+      # Clients reach the broker by pod IP, so advertise the pod's own IP.
+      shell: KAFKA_ADVERTISED_LISTENERS="PLAINTEXT://$(hostname -i):9092" exec /etc/kafka/docker/run
+      timeout: 3m
+      logs: failed
+      readinessProbe:
+        tcpSocket:
+          port: 9092
+        periodSeconds: 2
+        failureThreshold: 60
+    auth-mock:
+      image: stoplight/prism:5.15.10
+      content:
+        git:
+          uri: https://github.com/neuralnimbus22/order-demo-enterprise
+          revision: '{{config.branch}}'
+          paths:
+          - contracts
+      args: [mock, -h, 0.0.0.0, -p, "4010", /data/repo/contracts/auth-service.openapi.yaml]
+      timeout: 3m
+      logs: always
+      readinessProbe:
+        tcpSocket:
+          port: 4010
+        periodSeconds: 2
+        failureThreshold: 60
+    catalog-mock:
+      image: stoplight/prism:5.15.10
+      content:
+        git:
+          uri: https://github.com/neuralnimbus22/order-demo-enterprise
+          revision: '{{config.branch}}'
+          paths:
+          - contracts
+      args: [mock, -h, 0.0.0.0, -p, "4010", /data/repo/contracts/product-catalog.openapi.yaml]
+      timeout: 3m
+      logs: always
+      readinessProbe:
+        tcpSocket:
+          port: 4010
+        periodSeconds: 2
+        failureThreshold: 60
+  steps:
+  - name: Run order-service against Prism mocks and per-run Kafka
+    container:
+      image: node:20
+    run:
+      env:
+      - name: AUTH_URL
+        value: http://{{services.auth-mock.0.ip}}:4010
+      - name: CATALOG_URL
+        value: http://{{services.catalog-mock.0.ip}}:4010
+      - name: KAFKA_BROKERS
+        value: '{{services.kafka.0.ip}}:9092'
+      - name: KAFKA_TOPIC
+        value: order-placed
+      - name: ORDER_URL
+        value: http://localhost:3002
+      - name: REPORT_DIR
+        value: /data/repo/target/mock-services
+      shell: |
+        set -e
+        (cd services/order && npm install --omit=dev --no-audit --no-fund --loglevel=error)
+        (cd tests/mock-services && npm install --no-audit --no-fund --loglevel=error)
+        node services/order/server.js &
+        node tests/mock-services/prism-check.js
+    artifacts:
+      paths:
+      - target/mock-services/*.xml

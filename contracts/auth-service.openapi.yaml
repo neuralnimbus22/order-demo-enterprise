@@ -1,0 +1,93 @@
+# auth-service as order-service calls it.
+# Source: tests/contract/pacts/order-service-auth-service.json (200 shape)
+# and services/auth/server.js (401 and 403 shapes).
+# The named example "authorize-order" is what Microcks serves as the mock.
+openapi: 3.0.3
+info:
+  title: auth-service
+  version: 1.0.0
+  description: Authorizes an order from a static Bearer-token catalogue.
+paths:
+  /authorize:
+    post:
+      operationId: authorize
+      summary: Authorize an order
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AuthorizeRequest'
+            examples:
+              authorize-order:
+                value:
+                  orderId: order-abc-123
+                  token: demo-token-good
+      responses:
+        '200':
+          description: Token is valid and carries the required scope.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthorizeResponse'
+              examples:
+                authorize-order:
+                  value:
+                    authorized: true
+                    scope:
+                      - orders:create
+        '401':
+          description: Token is missing or unknown.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [error]
+                properties:
+                  error:
+                    type: string
+                    enum: [invalid_token]
+        '403':
+          description: Token is known but lacks the required scope.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [error, required, have]
+                properties:
+                  error:
+                    type: string
+                    enum: [insufficient_scope]
+                  required:
+                    type: string
+                  have:
+                    type: array
+                    items:
+                      type: string
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+  schemas:
+    AuthorizeRequest:
+      type: object
+      required: [orderId, token]
+      properties:
+        orderId:
+          type: string
+        token:
+          type: string
+    AuthorizeResponse:
+      type: object
+      required: [authorized, scope]
+      properties:
+        authorized:
+          type: boolean
+        scope:
+          type: array
+          minItems: 1
+          items:
+            type: string

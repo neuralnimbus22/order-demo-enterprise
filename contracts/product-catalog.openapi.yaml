@@ -1,0 +1,71 @@
+# product-catalog as order-service calls it (only when the order has a sku).
+# Source: tests/contract/pacts/order-service-product-catalog.json (200 shape)
+# and services/product-catalog/server.js (404 shape).
+# The example name "BK-001" ties the path parameter to its response, which is
+# how Microcks picks the mock response for GET /products/BK-001.
+openapi: 3.0.3
+info:
+  title: product-catalog
+  version: 1.0.0
+  description: Read-only product lookup. The product id is the sku.
+paths:
+  /products/{id}:
+    get:
+      operationId: getProduct
+      summary: Get one product by sku
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+          examples:
+            BK-001:
+              value: BK-001
+      responses:
+        '200':
+          description: The product.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Product'
+              examples:
+                BK-001:
+                  value:
+                    id: BK-001
+                    name: Hardcover Notebook
+                    category: books
+                    price: 14.99
+                    description: 200-page lined hardcover notebook.
+                    stock: 42
+        '404':
+          description: Unknown sku.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [error, sku]
+                properties:
+                  error:
+                    type: string
+                    enum: [unknown product]
+                  sku:
+                    type: string
+components:
+  schemas:
+    Product:
+      type: object
+      required: [id, name, category, price, description, stock]
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        category:
+          type: string
+        price:
+          type: number
+        description:
+          type: string
+        stock:
+          type: integer

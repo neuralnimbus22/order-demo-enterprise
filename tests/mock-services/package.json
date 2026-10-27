@@ -1,0 +1,13 @@
+{
+  "name": "mock-services-checks",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Checks order-service against mocked dependencies (Prism or Microcks) and a per-run Kafka.",
+  "scripts": {
+    "prism": "node prism-check.js",
+    "microcks": "node microcks-check.js"
+  },
+  "dependencies": {
+    "kafkajs": "^2.2.4"
+  }
+}
