@@ -6,6 +6,12 @@ metadata:
     ticket: TSE-854
     mocks: microcks
 spec:
+  # Always run on the home lab runner: another runner in the org has taken runs meant for it.
+  execution:
+    target:
+      match:
+        name:
+        - testkube-runner
   config:
     branch:
       type: string
