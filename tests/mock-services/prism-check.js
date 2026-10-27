@@ -23,7 +23,13 @@ runSuite('mock-services-prism', [
     stopOnFail: true,
     fn: async () => {
       const { status, body } = await placeOrder({ id: orderId, qty: 2, sku: 'BK-001' });
-      if (status !== 201) throw new Error(`expected 201, got ${status} ${JSON.stringify(body)}`);
+      // order-service hides upstream errors behind a plain 502 on purpose, so
+      // point at the mocks' logs, where Prism names the contract violation.
+      if (status !== 201) {
+        throw new Error(`expected 201, got ${status} ${JSON.stringify(body)}. ` +
+          'order-service does not say which upstream call failed: open the authmock and catalogmock ' +
+          'service logs of this run, where Prism logs the request that broke its contract.');
+      }
       if (body.item !== 'Hardcover Notebook') throw new Error(`item not filled from the catalog mock: ${JSON.stringify(body)}`);
       return JSON.stringify(body);
     },
