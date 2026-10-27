@@ -78,7 +78,12 @@ spec:
         (cd services/order && npm install --omit=dev --no-audit --no-fund --loglevel=error)
         (cd tests/mock-services && npm install --no-audit --no-fund --loglevel=error)
         node services/order/server.js &
+        ORDER_PID=$!
+        set +e
         node tests/mock-services/microcks-check.js
+        TEST_EXIT=$?
+        kill $ORDER_PID 2>/dev/null; wait $ORDER_PID 2>/dev/null
+        exit $TEST_EXIT
     artifacts:
       paths:
       - target/mock-services/*.xml
