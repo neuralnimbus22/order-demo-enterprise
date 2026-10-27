@@ -17,6 +17,7 @@ spec:
   container:
     workingDir: /data/repo
   services:
+    # Service names have no dashes: "{{services.a-b.0.ip}}" parses as a subtraction.
     kafka:
       image: apache/kafka:3.7.0
       env:
@@ -49,7 +50,7 @@ spec:
           port: 9092
         periodSeconds: 2
         failureThreshold: 60
-    auth-mock:
+    authmock:
       image: stoplight/prism:5.15.10
       content:
         git:
@@ -57,7 +58,7 @@ spec:
           revision: '{{config.branch}}'
           paths:
           - contracts
-      args: [mock, -h, 0.0.0.0, -p, "4010", /data/repo/contracts/auth-service.openapi.yaml]
+      args: [mock, -m, "false", -h, 0.0.0.0, -p, "4010", /data/repo/contracts/auth-service.openapi.yaml]
       timeout: 3m
       logs: always
       readinessProbe:
@@ -65,7 +66,7 @@ spec:
           port: 4010
         periodSeconds: 2
         failureThreshold: 60
-    catalog-mock:
+    catalogmock:
       image: stoplight/prism:5.15.10
       content:
         git:
@@ -73,7 +74,7 @@ spec:
           revision: '{{config.branch}}'
           paths:
           - contracts
-      args: [mock, -h, 0.0.0.0, -p, "4010", /data/repo/contracts/product-catalog.openapi.yaml]
+      args: [mock, -m, "false", -h, 0.0.0.0, -p, "4010", /data/repo/contracts/product-catalog.openapi.yaml]
       timeout: 3m
       logs: always
       readinessProbe:
@@ -88,9 +89,9 @@ spec:
     run:
       env:
       - name: AUTH_URL
-        value: http://{{services.auth-mock.0.ip}}:4010
+        value: http://{{services.authmock.0.ip}}:4010
       - name: CATALOG_URL
-        value: http://{{services.catalog-mock.0.ip}}:4010
+        value: http://{{services.catalogmock.0.ip}}:4010
       - name: KAFKA_BROKERS
         value: '{{services.kafka.0.ip}}:9092'
       - name: KAFKA_TOPIC
