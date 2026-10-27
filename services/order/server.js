@@ -127,7 +127,7 @@ app.post('/orders', async (req, res) => {
     // sku is included in the published payload only when it was supplied —
     // keeps the no-sku message identical to today. inventory ignores unknown
     // fields, so this is forward-compatible.
-    const payload = { id, item, qty: qty || 1, at: new Date().toISOString() };
+    const payload = { orderId: id, item, qty: qty || 1, at: new Date().toISOString() };
     if (sku) payload.sku = sku;
     await producer.send({
       topic: KAFKA_TOPIC,
