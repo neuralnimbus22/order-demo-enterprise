@@ -1,0 +1,53 @@
+// Runs the mock-services-gate Test Workflow in the SA Demo org for one branch
+// and fails the build when the gate fails.
+//
+// The build runs in a pod with the Testkube CLI image (Kubernetes plugin), so
+// Jenkins needs no Testkube plugin. The gate pins its own runner, so no
+// --target is passed here.
+//
+// Needs one Jenkins credential: TK_API_TOKEN (Secret text), a Testkube API
+// token for the SA Demo org with permission to run workflows.
+pipeline {
+    agent {
+        kubernetes {
+            yaml """
+apiVersion: v1
+kind: Pod
+spec:
+  containers:
+  - name: testkube
+    image: kubeshop/testkube-cli:2.14.2
+    command: ["sleep"]
+    args: ["9999999"]
+    resources:
+      requests:
+        cpu: 100m
+        memory: 128Mi
+"""
+        }
+    }
+    options {
+        buildDiscarder(logRotator(numToKeepStr: '20'))
+        timeout(time: 20, unit: 'MINUTES')
+    }
+    parameters {
+        string(name: 'BRANCH', defaultValue: 'mock-services-demo',
+               description: 'Branch of order-demo-enterprise to test: mock-services-demo, mock-services-demo-break or mock-services-demo-rest-break')
+    }
+    environment {
+        TK_ORG = 'tkcorg_b5ace2135f138dc8'
+        TK_ENV = 'tkcenv_362177294460621a'
+        TK_API_TOKEN = credentials('TK_API_TOKEN')
+    }
+    stages {
+        stage('Run mock-services-gate') {
+            steps {
+                container('testkube') {
+                    sh 'testkube set context --api-key "$TK_API_TOKEN" --org-id "$TK_ORG" --env-id "$TK_ENV"'
+                    // -f follows the run and exits non-zero when the gate fails.
+                    sh 'testkube run testworkflow mock-services-gate --config branch="$BRANCH" -f'
+                }
+            }
+        }
+    }
+}
