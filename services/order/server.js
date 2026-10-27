@@ -97,7 +97,7 @@ app.post('/orders', async (req, res) => {
         // Send token as Bearer; auth-service also accepts {token} in body.
         'Authorization': `Bearer ${AUTH_TOKEN}`,
       },
-      body: JSON.stringify({ orderId: id, token: AUTH_TOKEN }),
+      body: JSON.stringify({ order_id: id, token: AUTH_TOKEN }),
       // Short timeout so a hung/down auth fails fast rather than tying up the
       // request for the default fetch timeout (which is effectively forever).
       signal: AbortSignal.timeout(2000),
