@@ -19,6 +19,15 @@ spec:
     image: kubeshop/testkube-cli:2.14.2
     command: ["sleep"]
     args: ["9999999"]
+    # The CLI image runs as user 1001, but the Jenkins agent creates the
+    # workspace as user 1000. Run as 1000 so the sh steps can write there.
+    securityContext:
+      runAsUser: 1000
+    # The CLI saves its context under HOME, and the image's HOME (/) is not
+    # writable, so point HOME at the agent's work directory.
+    env:
+    - name: HOME
+      value: /home/jenkins/agent
     resources:
       requests:
         cpu: 100m
